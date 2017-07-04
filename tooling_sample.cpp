@@ -19,79 +19,96 @@
 #include "clang/Tooling/Tooling.h"
 #include "llvm/Support/raw_ostream.h"
 
-using namespace clang;
-using namespace clang::driver;
-using namespace clang::tooling;
-
 static llvm::cl::OptionCategory ToolingSampleCategory("Mixin With Steroids");
 
-struct ObjCVisitor : public RecursiveASTVisitor<ObjCVisitor> {
-  ObjCVisitor(Rewriter &R) : TheRewriter(R) {}
-  
-  auto VisitObjCInterfaceDecl(ObjCInterfaceDecl* o) -> bool
+struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
+{
+  ObjCVisitor(clang::Rewriter &R):
+  _rewriter(R)
   {
+  }
+  
+  auto VisitObjCInterfaceDecl(clang::ObjCInterfaceDecl* o) -> bool
+  {
+    llvm::outs() << "visiting interface decl" << '\n';
     return true;
   }
   
-  auto VisitObjCProtocolDecl(ObjCProtocolDecl* o) -> bool
+  auto VisitObjCProtocolDecl(clang::ObjCProtocolDecl* o) -> bool
   {
+    llvm::outs() << "visiting protocol decl" << '\n';
     return true;
   }
   
-  auto VisitObjCImplementationDecl(ObjCImplementationDecl* o) -> bool
+  auto VisitObjCImplementationDecl(clang::ObjCImplementationDecl* o) -> bool
   {
+    llvm::outs() << "visiting impl decl" << '\n';
     return true;
   }
   
-  auto VisitObjCIvarDeclaration(ObjCIvarDecl* o) -> bool
+  auto VisitObjCIvarDeclaration(clang::ObjCIvarDecl* o) -> bool
   {
+    llvm::outs() << "visiting ivar decl" << '\n';
     return true;
   }
 
-  Rewriter &TheRewriter;
+  clang::Rewriter &_rewriter;
 };
 
-struct ObjCASTConsumer : public ASTConsumer {
-  ObjCASTConsumer(Rewriter &R) : Visitor(R) {}
-
-  auto HandleTopLevelDecl(DeclGroupRef DR) -> bool override
+struct ObjCASTConsumer : public clang::ASTConsumer
+{
+  ObjCASTConsumer(clang::Rewriter &rewriter):
+  _visitor(rewriter)
   {
-    for (auto b = DR.begin(), e = DR.end(); b != e; ++b) {
-      Visitor.TraverseDecl(*b);
-      (*b)->dump();
+  }
+
+  auto HandleTopLevelDecl(clang::DeclGroupRef declGroup) -> bool override
+  {
+    for (auto &b: declGroup) {
+      _visitor.TraverseDecl(b);
+      //b->dump();
     }
+    
     return true;
   }
 
-  ObjCVisitor Visitor;
+  ObjCVisitor _visitor;
 };
 
 // For each source file provided to the tool, a new FrontendAction is created.
-struct MyFrontendAction : public ASTFrontendAction {
-  MyFrontendAction() {}
+struct MyFrontendAction : public clang::ASTFrontendAction
+{
+  MyFrontendAction()
+  {
+  }
   
   auto EndSourceFileAction() -> void override 
   {
-    SourceManager &SM = TheRewriter.getSourceMgr();
+    return;
+    
+    auto &srcManager = _rewriter.getSourceMgr();
+    
     llvm::errs() << "** EndSourceFileAction for: "
-                 << SM.getFileEntryForID(SM.getMainFileID())->getName() << "\n";
+                 << srcManager.getFileEntryForID(srcManager.getMainFileID())->getName() << "\n";
 
-    TheRewriter.getEditBuffer(SM.getMainFileID()).write(llvm::outs());
+    _rewriter.getEditBuffer(srcManager.getMainFileID()).write(llvm::outs());
   }
 
-  auto CreateASTConsumer(CompilerInstance &CI, StringRef file) -> std::unique_ptr<ASTConsumer> override
+  auto CreateASTConsumer(clang::CompilerInstance &compilerInstance, llvm::StringRef file) -> std::unique_ptr<clang::ASTConsumer> override
   {
     llvm::errs() << "** Creating AST consumer for: " << file << "\n";
-    TheRewriter.setSourceMgr(CI.getSourceManager(), CI.getLangOpts());
-    return llvm::make_unique<ObjCASTConsumer>(TheRewriter);
+    _rewriter.setSourceMgr(compilerInstance.getSourceManager(), compilerInstance.getLangOpts());
+        
+    return llvm::make_unique<ObjCASTConsumer>(_rewriter);
   }
 
-  Rewriter TheRewriter;
+  clang::Rewriter _rewriter;
 };
 
-auto main(int argc, const char **argv) -> int {
-  CommonOptionsParser op(argc, argv, ToolingSampleCategory);
-  ClangTool Tool(op.getCompilations(), op.getSourcePathList());
+auto main(int argc, const char **argv) -> int
+{
+  auto op = clang::tooling::CommonOptionsParser(argc, argv, ToolingSampleCategory);
+  auto tool = clang::tooling::ClangTool(op.getCompilations(), op.getSourcePathList());
 
-  return Tool.run(newFrontendActionFactory<MyFrontendAction>().get());
+  return tool.run(clang::tooling::newFrontendActionFactory<MyFrontendAction>().get());
 }
