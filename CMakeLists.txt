@@ -14,8 +14,8 @@ separate_arguments(CLANG_LIBS)
 # I know, I know, those flags should not be added like this
 add_definitions("-std=c++14 -Wall -Wextra")
 
-add_executable(tooling_sample tooling_sample.cpp)
+add_executable(composition_tool composition_tool.cpp)
 
 include_directories(SYSTEM ${LLVM_INCLUDE_DIRS} ${CLANG_INCLUDE_DIRS})
 
-target_link_libraries(tooling_sample ${LLVM_LIBS} ${CLANG_LIBS} -lz -lcurses)
+target_link_libraries(composition_tool ${LLVM_LIBS} ${CLANG_LIBS} -lz -lcurses)
