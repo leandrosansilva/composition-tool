@@ -18,3 +18,9 @@
 @property (readonly) NSNumber* length;
 
 @end
+
+@interface MixinWithSomething (SomeWeirdExtension)
+
++ (BOOL) staticMemberForRescue:(MixinWithSomething*)parent;
+
+@end

@@ -20,6 +20,8 @@
 #include "llvm/Support/raw_ostream.h"
 
 namespace {
+  const llvm::StringRef PROVIDE_TAG("__provide__");
+  
   template<typename F, typename D>
   auto runIfInMainFile(clang::ASTContext& context, F function, D decl) -> bool
   {
@@ -29,24 +31,43 @@ namespace {
     
     return true;
   }
+  
+  // FIXME: why 10? Can it grow? OMG, 
+  auto extractProvidedItems(const std::vector<clang::AnnotateAttr*>& attrs) -> llvm::SmallVector<llvm::StringRef, 10>
+  {
+    auto items = llvm::SmallVector<llvm::StringRef, 10>();
+    
+    // TODO: handle errors on parsing provided items?
+    for (const auto attr: attrs) {
+      attr->getAnnotation().trim().substr(PROVIDE_TAG.size()).split(items, " ", -1, false);
+    }
+    
+    return items;
+  }
 
   auto generateExtension(clang::ObjCPropertyDecl* o,
                          clang::Rewriter& rewriter,
                          clang::ASTContext& context,
                          const std::vector<clang::AnnotateAttr*>& attrs) -> void
   {
-      const auto typeInfo = o->getTypeSourceInfo();
-      const auto type = typeInfo->getType().getTypePtrOrNull();
+    const auto provided = extractProvidedItems(attrs);
+    
+    for (const auto& item: provided) {
+      llvm::outs() << "item: " << item << '\n';
+    }
+    
+    const auto typeInfo = o->getTypeSourceInfo();
+    const auto type = typeInfo->getType().getTypePtrOrNull();
 
-      if (auto objcObjectType = llvm::dyn_cast<clang::ObjCObjectPointerType>(type)) {
-        llvm::outs() << "Found a object property!!! " << objcObjectType->getTypeClassName() << '\n';
-      }
+    if (auto objcObjectType = llvm::dyn_cast<clang::ObjCObjectPointerType>(type)) {
+      llvm::outs() << "Found a object property!!! " << objcObjectType->getTypeClassName() << '\n';
+    }
 
-      for (const auto& attr: attrs) {
-        const auto annotationValue = attr->getAnnotation();
-        llvm::outs() << "Found a property annotation!!! " << annotationValue << '\n';
-        o->dump();
-      }
+    for (const auto& attr: attrs) {
+      const auto annotationValue = attr->getAnnotation();
+      llvm::outs() << "Found a property annotation!!! " << annotationValue << '\n';
+      o->dump();
+    }
   }
 }
 
@@ -72,7 +93,7 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
   auto VisitObjCInterfaceDecl(clang::ObjCInterfaceDecl* o) -> bool
   {
     return visit([](clang::ObjCInterfaceDecl *o) {
-        llvm::outs() << "visiting interface decl " << o->getName() << '\n';
+        //llvm::outs() << "visiting interface decl " << o->getName() << '\n';
         return true;
     }, o);
   }
@@ -80,7 +101,7 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
   auto VisitObjCProtocolDecl(clang::ObjCProtocolDecl* o) -> bool
   {
     return visit([](clang::ObjCProtocolDecl *o) {
-        llvm::outs() << "visiting protocol decl " << o->getName() << '\n';
+        //llvm::outs() << "visiting protocol decl " << o->getName() << '\n';
         return true;
     }, o);
   }
@@ -88,7 +109,7 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
   auto VisitObjCImplementationDecl(clang::ObjCImplementationDecl* o) -> bool
   {
     return visit([](clang::ObjCImplementationDecl *o) {
-        llvm::outs() << "visiting impl decl " << o->getName() << '\n';
+        //llvm::outs() << "visiting impl decl " << o->getName() << '\n';
         return true;
     }, o);
   }
@@ -96,7 +117,15 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
   auto VisitObjCIvarDecl(clang::ObjCIvarDecl* o) -> bool
   {
     return visit([](clang::ObjCIvarDecl *o) {
-        llvm::outs() << "visiting ivar decl " << o->getName() << '\n';
+        //llvm::outs() << "visiting ivar decl " << o->getName() << '\n';
+        return true;
+    }, o);
+  }
+  
+  auto VisitObjCCategoryDecl(clang::ObjCCategoryDecl* o) -> bool
+  {
+    return visit([this](clang::ObjCCategoryDecl *o) {
+        llvm::outs() << "visiting category decl " << o->getName() << '\n';
         return true;
     }, o);
   }
@@ -104,7 +133,19 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
   auto VisitObjCPropertyDecl(clang::ObjCPropertyDecl* o) -> bool
   {
     return visit([this](clang::ObjCPropertyDecl *o) {
-      llvm::outs() << "visiting property decl " << o->getIdentifier()->getName() << ", name: " << o->getName() << '\n';
+      const auto typeInfo = o->getTypeSourceInfo();
+      const auto type = typeInfo->getType().getTypePtrOrNull();
+    
+      auto objcObjectType = llvm::dyn_cast<clang::ObjCObjectPointerType>(type);
+    
+      // Only properties of objc types can provide...
+      // TODO: emit error in case properties of other types try to provide something
+      if (objcObjectType == nullptr) {
+        return true;
+      }
+      
+      llvm::outs() << "Found a object property!!! " << objcObjectType->getTypeClassName() 
+                   << ":" << o->getName() << '\n';
 
       auto provideAnnotationAttrs = std::vector<clang::AnnotateAttr*>{};
 
@@ -112,7 +153,7 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
       for (auto& attr: o->getAttrs()) {
         auto annotateAttr = llvm::dyn_cast<clang::AnnotateAttr>(attr);
 
-        if (annotateAttr != nullptr && annotateAttr->getAnnotation().startswith("__provide__")) {
+        if (annotateAttr != nullptr && annotateAttr->getAnnotation().startswith(PROVIDE_TAG)) {
           provideAnnotationAttrs.push_back(annotateAttr);
         }
       }

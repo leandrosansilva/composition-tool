@@ -53,6 +53,9 @@ typedef struct SomeStruct
  TODO: how to handle properties which are of a protocoled type? '<' and '>' cannot be
  used in file names. Maybe replace with __?
  
- TODO: wildcards: @* provides all properties, * provides all selectors
+ TODO: wildcards: @* provides all properties, -* provides all object selectors and +*
+ 	all class selectors
  TODO: on wildcards, do not override properties and selectors
+ 
+ TODO: Forbid methods that start with -init to be provided with error message!
 */
