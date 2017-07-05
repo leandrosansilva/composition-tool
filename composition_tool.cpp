@@ -29,17 +29,36 @@ namespace {
     
     return true;
   }
+
+  auto generateExtension(clang::ObjCPropertyDecl* o,
+                         clang::Rewriter& rewriter,
+                         clang::ASTContext& context,
+                         const std::vector<clang::AnnotateAttr*>& attrs) -> void
+  {
+      const auto typeInfo = o->getTypeSourceInfo();
+      const auto type = typeInfo->getType().getTypePtrOrNull();
+
+      if (auto objcObjectType = llvm::dyn_cast<clang::ObjCObjectPointerType>(type)) {
+        llvm::outs() << "Found a object property!!! " << objcObjectType->getTypeClassName() << '\n';
+      }
+
+      for (const auto& attr: attrs) {
+        const auto annotationValue = attr->getAnnotation();
+        llvm::outs() << "Found a property annotation!!! " << annotationValue << '\n';
+        o->dump();
+      }
+  }
 }
 
 static llvm::cl::OptionCategory ToolingSampleCategory("Mixin With Steroids");
 
 struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
 {
-  clang::Rewriter &_rewriter;
+  clang::Rewriter& _rewriter;
   clang::ASTContext& _context;
   
   template<typename F, typename D>
-  auto runIfInMainFile(F function, D decl) const -> bool
+  auto visit(F function, D decl) const -> bool
   {
     return ::runIfInMainFile(_context, function, decl);
   }
@@ -49,52 +68,57 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
   _context(context)
   {
   }
-  
+
   auto VisitObjCInterfaceDecl(clang::ObjCInterfaceDecl* o) -> bool
   {
-    return runIfInMainFile([](clang::ObjCInterfaceDecl* o){
-      llvm::outs() << "visiting interface decl " << o->getName() << '\n';
-      return true; 
+    return visit([](clang::ObjCInterfaceDecl *o) {
+        llvm::outs() << "visiting interface decl " << o->getName() << '\n';
+        return true;
     }, o);
   }
   
   auto VisitObjCProtocolDecl(clang::ObjCProtocolDecl* o) -> bool
   {
-    return runIfInMainFile([](clang::ObjCProtocolDecl* o){
-      llvm::outs() << "visiting protocol decl " << o->getName() << '\n';
-      return true;
+    return visit([](clang::ObjCProtocolDecl *o) {
+        llvm::outs() << "visiting protocol decl " << o->getName() << '\n';
+        return true;
     }, o);
   }
   
   auto VisitObjCImplementationDecl(clang::ObjCImplementationDecl* o) -> bool
   {
-    return runIfInMainFile([](clang::ObjCImplementationDecl* o){
-      llvm::outs() << "visiting impl decl " << o->getName() << '\n';
-      return true;
+    return visit([](clang::ObjCImplementationDecl *o) {
+        llvm::outs() << "visiting impl decl " << o->getName() << '\n';
+        return true;
     }, o);
   }
   
   auto VisitObjCIvarDecl(clang::ObjCIvarDecl* o) -> bool
   {
-    return runIfInMainFile([](clang::ObjCIvarDecl* o){
-      llvm::outs() << "visiting ivar decl " << o->getName() << '\n';
-      return true;
+    return visit([](clang::ObjCIvarDecl *o) {
+        llvm::outs() << "visiting ivar decl " << o->getName() << '\n';
+        return true;
     }, o);
   }
   
   auto VisitObjCPropertyDecl(clang::ObjCPropertyDecl* o) -> bool
   {
-    return runIfInMainFile([](clang::ObjCPropertyDecl* o){
-      llvm::outs() << "visiting property decl " << o->getName() << '\n';
-      const auto attrs = o->getAttrs();
-      for (auto attr: attrs) {
-        llvm::outs() << "new attr: " << attr->getSpelling() << '\n';
-        auto kind = attr->getKind();
-        if (kind == clang::attr::Kind::Annotate) {
-          llvm::outs() << "Found a property annotation!!!" << '\n';
+    return visit([this](clang::ObjCPropertyDecl *o) {
+      llvm::outs() << "visiting property decl " << o->getIdentifier()->getName() << ", name: " << o->getName() << '\n';
+
+      auto provideAnnotationAttrs = std::vector<clang::AnnotateAttr*>{};
+
+      // I know, I know, but copy_if does not cast, so a simple for does the job
+      for (auto& attr: o->getAttrs()) {
+        auto annotateAttr = llvm::dyn_cast<clang::AnnotateAttr>(attr);
+
+        if (annotateAttr != nullptr && annotateAttr->getAnnotation().startswith("__provide__")) {
+          provideAnnotationAttrs.push_back(annotateAttr);
         }
       }
-      o->dump();
+
+      generateExtension(o, _rewriter, _context, provideAnnotationAttrs);
+
       return true;
     }, o);
   }
@@ -113,7 +137,6 @@ struct ObjCASTConsumer : public clang::ASTConsumer
   {
     for (auto &b: declGroup) {
       _visitor.TraverseDecl(b);
-      //b->dump();
     }
     
     return true;

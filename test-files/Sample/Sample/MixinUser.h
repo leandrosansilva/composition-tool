@@ -10,16 +10,38 @@
 
 #define PROVIDE(__value__) __attribute__((annotate("__provide__ " #__value__)))
 
+@protocol SomeDelegate<NSObject>
+- (void)doSomething;
+@end
+
+typedef struct SomeStruct
+{
+	struct SomeStruct* next;
+	int value;
+} SomeStruct;
+
 @interface MixinUser : NSObject
+{
+	NSDictionary* aDictionary PROVIDE(@*);
+}
 
 @property (readonly) MixinWithSomething* mws
-	PROVIDE(@length invertName concatenateWithPrefix:suffix:);
+	PROVIDE(@length -invertName -concatenateWithPrefix:suffix:);
 
 /* Generated in the file generated/MixinUser+mixin_property_mws_MixinWithSomething.h
  @property (readonly) NSNumber* length;
  - (NSString*)invertName;
  - (NSString*)concatenateWithPrefix:(NSString*)prefix suffix:(NSString*)suffix;
 */
+
+@property NSNumber* aNormalProperty;
+
+@property int anScalarProperty;
+
+@property id<SomeDelegate> aProtocoledProperty
+	PROVIDE(@* -* +*);
+
+@property SomeStruct anStructProperty;
 
 @end
 
@@ -30,4 +52,7 @@
  
  TODO: how to handle properties which are of a protocoled type? '<' and '>' cannot be
  used in file names. Maybe replace with __?
+ 
+ TODO: wildcards: @* provides all properties, * provides all selectors
+ TODO: on wildcards, do not override properties and selectors
 */
