@@ -19,50 +19,89 @@
 #include "clang/Tooling/Tooling.h"
 #include "llvm/Support/raw_ostream.h"
 
+namespace {
+  template<typename F, typename D>
+  auto runIfInMainFile(clang::ASTContext& context, F function, D decl) -> bool
+  {
+    if (context.getSourceManager().isInMainFile(decl->getLocStart())) {
+      return function(decl);
+    }
+    
+    return true;
+  }
+}
+
 static llvm::cl::OptionCategory ToolingSampleCategory("Mixin With Steroids");
 
 struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
 {
-  ObjCVisitor(clang::Rewriter &R):
-  _rewriter(R)
+  clang::Rewriter &_rewriter;
+  clang::ASTContext& _context;
+  
+  template<typename F, typename D>
+  auto runIfInMainFile(F function, D decl) const -> bool
+  {
+    return ::runIfInMainFile(_context, function, decl);
+  }
+  
+  ObjCVisitor(clang::Rewriter &R, clang::ASTContext& context):
+  _rewriter(R),
+  _context(context)
   {
   }
   
   auto VisitObjCInterfaceDecl(clang::ObjCInterfaceDecl* o) -> bool
   {
-    llvm::outs() << "visiting interface decl" << '\n';
-    return true;
+    return runIfInMainFile([](clang::ObjCInterfaceDecl* o){
+      llvm::outs() << "visiting interface decl " << o->getName() << '\n';
+      return true; 
+    }, o);
   }
   
   auto VisitObjCProtocolDecl(clang::ObjCProtocolDecl* o) -> bool
   {
-    llvm::outs() << "visiting protocol decl" << '\n';
-    return true;
+    return runIfInMainFile([](clang::ObjCProtocolDecl* o){
+      llvm::outs() << "visiting protocol decl " << o->getName() << '\n';
+      return true;
+    }, o);
   }
   
   auto VisitObjCImplementationDecl(clang::ObjCImplementationDecl* o) -> bool
   {
-    llvm::outs() << "visiting impl decl" << '\n';
-    return true;
+    return runIfInMainFile([](clang::ObjCImplementationDecl* o){
+      llvm::outs() << "visiting impl decl " << o->getName() << '\n';
+      return true;
+    }, o);
   }
   
-  auto VisitObjCIvarDeclaration(clang::ObjCIvarDecl* o) -> bool
+  auto VisitObjCIvarDecl(clang::ObjCIvarDecl* o) -> bool
   {
-    llvm::outs() << "visiting ivar decl" << '\n';
-    return true;
+    return runIfInMainFile([](clang::ObjCIvarDecl* o){
+      llvm::outs() << "visiting ivar decl " << o->getName() << '\n';
+      return true;
+    }, o);
   }
-
-  clang::Rewriter &_rewriter;
+  
+  auto VisitObjCPropertyDecl(clang::ObjCPropertyDecl* o) -> bool
+  {
+    return runIfInMainFile([](clang::ObjCPropertyDecl* o){
+      llvm::outs() << "visiting property decl " << o->getName() << '\n';
+      o->dumpColor();
+      return true;
+    }, o);
+  }
 };
 
 struct ObjCASTConsumer : public clang::ASTConsumer
 {
-  ObjCASTConsumer(clang::Rewriter &rewriter):
-  _visitor(rewriter)
+  ObjCVisitor _visitor;
+  
+  ObjCASTConsumer(clang::Rewriter &rewriter, clang::ASTContext& context):
+  _visitor({rewriter, context})
   {
   }
 
-  auto HandleTopLevelDecl(clang::DeclGroupRef declGroup) -> bool override
+  auto HandleTopLevelDecl(clang::DeclGroupRef declGroup) -> bool final
   {
     for (auto &b: declGroup) {
       _visitor.TraverseDecl(b);
@@ -72,7 +111,6 @@ struct ObjCASTConsumer : public clang::ASTConsumer
     return true;
   }
 
-  ObjCVisitor _visitor;
 };
 
 // For each source file provided to the tool, a new FrontendAction is created.
@@ -82,7 +120,7 @@ struct MyFrontendAction : public clang::ASTFrontendAction
   {
   }
   
-  auto EndSourceFileAction() -> void override 
+  auto EndSourceFileAction() -> void final 
   {
     return;
     
@@ -94,12 +132,14 @@ struct MyFrontendAction : public clang::ASTFrontendAction
     _rewriter.getEditBuffer(srcManager.getMainFileID()).write(llvm::outs());
   }
 
-  auto CreateASTConsumer(clang::CompilerInstance &compilerInstance, llvm::StringRef file) -> std::unique_ptr<clang::ASTConsumer> override
+  auto CreateASTConsumer(clang::CompilerInstance &compilerInstance, llvm::StringRef file) -> std::unique_ptr<clang::ASTConsumer> final
   {
     llvm::errs() << "** Creating AST consumer for: " << file << "\n";
     _rewriter.setSourceMgr(compilerInstance.getSourceManager(), compilerInstance.getLangOpts());
-        
-    return llvm::make_unique<ObjCASTConsumer>(_rewriter);
+    
+    auto& context = compilerInstance.getASTContext();
+    
+    return llvm::make_unique<ObjCASTConsumer>(_rewriter, context);
   }
 
   clang::Rewriter _rewriter;
