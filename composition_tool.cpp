@@ -86,7 +86,15 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
   {
     return runIfInMainFile([](clang::ObjCPropertyDecl* o){
       llvm::outs() << "visiting property decl " << o->getName() << '\n';
-      o->dumpColor();
+      const auto attrs = o->getAttrs();
+      for (auto attr: attrs) {
+        llvm::outs() << "new attr: " << attr->getSpelling() << '\n';
+        auto kind = attr->getKind();
+        if (kind == clang::attr::Kind::Annotate) {
+          llvm::outs() << "Found a property annotation!!!" << '\n';
+        }
+      }
+      o->dump();
       return true;
     }, o);
   }
