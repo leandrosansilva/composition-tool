@@ -8,24 +8,14 @@
 
 #define PROVIDE(__value__) __attribute__((annotate("__provide__ " #__value__)))
 
-@protocol SomeDelegate<NSObject>
-- (void)doSomething;
-- (void)doSomething:(NSNumber*)smth Else:(NSString*)Else;
-@end
-
-typedef struct SomeStruct
-{
-	struct SomeStruct* next;
-	int value;
-} SomeStruct;
-
 @interface MixinUser : NSObject
 {
 	NSDictionary* aDictionary PROVIDE(@*);
 }
 
 @property (readonly) MixinWithSomething* mws
-	PROVIDE(@length -invertName -concatenateWithPrefix:suffix:);
+	PROVIDE(@length -invertName -concatenateWithPrefix:suffix:)
+	PROVIDE(-buildSomeStruct);
 
 /* Generated in the file generated/MixinUser+mixin_property_mws_MixinWithSomething.h
  @property (readonly) NSNumber* length;

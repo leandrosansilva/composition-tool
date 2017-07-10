@@ -21,6 +21,22 @@
 
 namespace {
   const llvm::StringRef PROVIDE_TAG("__provide__");
+
+  struct KnownDeclarations
+  {
+    template<typename T>
+    using LookupByName = std::map<llvm::StringRef, T>;
+
+    LookupByName<clang::ObjCInterfaceDecl*> interfaces;
+    LookupByName<clang::ObjCProtocolDecl*> protocols;
+
+    // More than one category for an interface can be declared
+    LookupByName<std::vector<clang::ObjCCategoryDecl*>> categories;
+
+    // a class can obviously have more than one selector,
+    LookupByName<std::vector<clang::ObjCMethodDecl*>> instanceMethods;
+    LookupByName<std::vector<clang::ObjCMethodDecl*>> classMethods;
+  };
   
   template<typename F, typename D>
   auto runIfInMainFile(clang::ASTContext& context, F function, D decl) -> bool
@@ -48,26 +64,58 @@ namespace {
   auto generateExtension(clang::ObjCPropertyDecl* o,
                          clang::Rewriter& rewriter,
                          clang::ASTContext& context,
-                         const std::vector<clang::AnnotateAttr*>& attrs) -> void
+                         const std::vector<clang::AnnotateAttr*>& attrs,
+                         const KnownDeclarations& knownDeclarations) -> void
   {
-    const auto provided = extractProvidedItems(attrs);
-    
-    for (const auto& item: provided) {
-      llvm::outs() << "item: " << item << '\n';
-    }
-    
+    const auto providedItems = extractProvidedItems(attrs);
+
     const auto typeInfo = o->getTypeSourceInfo();
     const auto type = typeInfo->getType().getTypePtrOrNull();
 
-    if (auto objcObjectType = llvm::dyn_cast<clang::ObjCObjectPointerType>(type)) {
-      llvm::outs() << "Found a object property!!! " << objcObjectType->getTypeClassName() << '\n';
-    }
+    // FIXME: this is a copy of some code below!!!
+    auto objcObjectType = llvm::dyn_cast<clang::ObjCObjectPointerType>(type);
+
+    assert(objcObjectType != nullptr);
+
+    const auto propertyTypeName = objcObjectType->getInterfaceType()->getTypeClassName();
+
+    llvm::outs() << "Found a object property!!! " << propertyTypeName << '\n';
 
     for (const auto& attr: attrs) {
       const auto annotationValue = attr->getAnnotation();
       llvm::outs() << "Found a property annotation!!! " << annotationValue << '\n';
       o->dump();
     }
+
+    const auto instanceSelectors = knownDeclarations.instanceMethods.find(propertyTypeName);
+
+    // FIXME: error handling
+    assert(instanceSelectors != knownDeclarations.instanceMethods.end());
+
+    for (const auto item: providedItems) {
+      // instance methods (FIXME: will fail with wildcard -*)
+      if (item.startswith("-")) {
+        const auto selectorName = item.substr(1);
+
+        llvm::outs() << "Processing item: " << selectorName << '\n';
+
+        const auto selectorInProperty = std::find_if(std::begin(instanceSelectors->second),
+                                                     std::end(instanceSelectors->second),
+                                                     [=](const clang::ObjCMethodDecl* methodDecl) -> bool {
+                                                       llvm::outs() << "Comparing " << methodDecl->getSelector().getAsString()
+                                                                    << " to " << selectorName << '\n';
+                                                       return methodDecl->getSelector().getAsString() == selectorName;
+                                                     });
+
+        assert(selectorInProperty != std::end(instanceSelectors->second));
+      }
+    }
+
+    llvm::outs() << "known interfaces: " << knownDeclarations.interfaces.size() << '\n';
+    llvm::outs() << "known protocols: " << knownDeclarations.protocols.size() << '\n';
+    llvm::outs() << "known categories: " << knownDeclarations.categories.size() << '\n';
+    llvm::outs() << "known classes with instance methods: " << knownDeclarations.instanceMethods.size() << '\n';
+    llvm::outs() << "known classes with class methods: " << knownDeclarations.classMethods.size() << '\n';
   }
 }
 
@@ -77,75 +125,89 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
 {
   clang::Rewriter& _rewriter;
   clang::ASTContext& _context;
-  
-  template<typename T>
-  using LookupByName = std::map<llvm::StringRef, T>;
-  
-  LookupByName<clang::ObjCInterfaceDecl*> _knownInterfaceDecls;
-  LookupByName<clang::ObjCProtocolDecl*> _knownPrococolDecls;
-  
-  // More than one category for an interface can be declared
-  LookupByName<std::vector<clang::ObjCCategoryDecl*>> _knownCategoryDecls;
-  
-  LookupByName<std::vector<clang::ObjCMethodDecl*>> _knownInstanceSelectors;
-  LookupByName<std::vector<clang::ObjCMethodDecl*>> _knownClassSelectors;
-  
+  KnownDeclarations& _knownDeclarations;
+
   template<typename F, typename D>
   auto visit(F function, D decl) const -> bool
   {
     return ::runIfInMainFile(_context, function, decl);
   }
   
-  ObjCVisitor(clang::Rewriter &R, clang::ASTContext& context):
+  ObjCVisitor(clang::Rewriter &R, clang::ASTContext& context, KnownDeclarations& knownDeclarations):
   _rewriter(R),
-  _context(context)
+  _context(context),
+  _knownDeclarations(knownDeclarations)
   {
   }
 
   auto VisitObjCInterfaceDecl(clang::ObjCInterfaceDecl* o) -> bool
   {
-    _knownInterfaceDecls[o->getName()] = o;
+    _knownDeclarations.interfaces[o->getName()] = o;
     return true;
   }
   
   auto VisitObjCProtocolDecl(clang::ObjCProtocolDecl* o) -> bool
   {
-    _knownPrococolDecls[o->getName()] = o;
+    _knownDeclarations.protocols[o->getName()] = o;
     return true;
   }
   
   auto VisitObjCMethodDecl(clang::ObjCMethodDecl* s) -> bool
   {
-    s->isInstanceMethod();
-    
+    //llvm::outs() << "Analysing selector " << s->getSelector().getAsString() << '\n';
+
+    const auto interface = s->getClassInterface();
+
+    if (interface == nullptr) {
+      return true;
+    }
+
+    auto& knownSelectors = s->isInstanceMethod()
+                           ? _knownDeclarations.instanceMethods
+                           : _knownDeclarations.classMethods;
+
+    knownSelectors[interface->getName()].push_back(s);
+
+    return true;
+
     const auto parents = _context.getParents(*s);
-    
+
+    if (parents.empty()) {
+      llvm::outs() << "  Method with no parent!: " << s->getSelector().getAsString() << '\n';
+    }
+
     for (const auto p: parents) {
       const auto interfaceParent = p.get<clang::ObjCInterfaceDecl>();
       const auto protocolParent = p.get<clang::ObjCProtocolDecl>();
-      
-      assert(interfaceParent != nullptr || protocolParent != nullptr);
+      const auto categoryParent = p.get<clang::ObjCCategoryDecl>();
+      const auto implementationParent = p.get<clang::ObjCImplementationDecl>();
+
+      assert(interfaceParent != nullptr || protocolParent != nullptr
+             || categoryParent != nullptr || implementationParent != nullptr);
       
       if (interfaceParent != nullptr) {
-        llvm::outs() << "LALALA interface parent: " << interfaceParent->getName() << '\n';
+        llvm::outs() << "  interface parent: " << interfaceParent->getName() << '\n';
       }
       
       if (protocolParent != nullptr) {
-        llvm::outs() << "LALALA interface parent: " << protocolParent->getName() << '\n';
+        llvm::outs() << "  protocol parent: " << protocolParent->getName() << '\n';
+      }
+
+      if (categoryParent != nullptr) {
+        llvm::outs() << "  category parent: " << categoryParent->getName() << '\n';
+      }
+
+      if (implementationParent != nullptr) {
+        llvm::outs() << "  implementation parent: " << implementationParent->getName() << '\n';
       }
     }
     
-    if (parents.empty()) {
-      llvm::outs() << "Method with no parent: " << s->getSelector().getAsString() << '\n';
-    }
-    
-    const auto interface = s->getClassInterface();
-    
     if (interface != nullptr) {
-      llvm::outs() << "selector interface: " << interface->getName() << '\n';
+      llvm::outs() << "  selector interface: " << interface->getName() << '\n';
+    } else {
+      llvm::outs() << "  selector has no interface" << '\n';
     }
     
-    //_knownSelectors[interface->getName()].push_back(s);
     return true;
   }
     
@@ -153,7 +215,7 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
   {
     const auto interface = o->getClassInterface();
     //llvm::outs() << "LALALA category decl: " << o->getName() << " for interface: " << interface->getName() << '\n';
-    _knownCategoryDecls[interface->getName()].push_back(o);
+    _knownDeclarations.categories[interface->getName()].push_back(o);
     return true;
   }
  
@@ -189,8 +251,8 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
         return true;
       }
       
-      llvm::outs() << "Found a object property!!! " << objcObjectType->getTypeClassName() 
-                   << ":" << o->getName() << '\n';
+      //llvm::outs() << "Found a object property!!! " << objcObjectType->getTypeClassName()
+      //             << ":" << o->getName() << '\n';
 
       auto provideAnnotationAttrs = std::vector<clang::AnnotateAttr*>{};
 
@@ -203,7 +265,7 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
         }
       }
 
-      generateExtension(o, _rewriter, _context, provideAnnotationAttrs);
+      generateExtension(o, _rewriter, _context, provideAnnotationAttrs, _knownDeclarations);
 
       return true;
     }, o);
@@ -212,10 +274,11 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
 
 struct ObjCASTConsumer : public clang::ASTConsumer
 {
+  KnownDeclarations _knownDeclarations;
   ObjCVisitor _visitor;
-  
+
   ObjCASTConsumer(clang::Rewriter &rewriter, clang::ASTContext& context):
-  _visitor({rewriter, context})
+  _visitor({rewriter, context, _knownDeclarations})
   {
   }
 
@@ -233,6 +296,8 @@ struct ObjCASTConsumer : public clang::ASTConsumer
 // For each source file provided to the tool, a new FrontendAction is created.
 struct MyFrontendAction : public clang::ASTFrontendAction
 {
+  clang::Rewriter _rewriter;
+
   MyFrontendAction()
   {
   }
@@ -258,8 +323,6 @@ struct MyFrontendAction : public clang::ASTFrontendAction
     
     return llvm::make_unique<ObjCASTConsumer>(_rewriter, context);
   }
-
-  clang::Rewriter _rewriter;
 };
 
 auto main(int argc, const char **argv) -> int
