@@ -4,14 +4,13 @@
 //
 //
 
-#import <Foundation/Foundation.h>
-
 #import "MixinWithSomething.h"
 
 #define PROVIDE(__value__) __attribute__((annotate("__provide__ " #__value__)))
 
 @protocol SomeDelegate<NSObject>
 - (void)doSomething;
+- (void)doSomething:(NSNumber*)smth Else:(NSString*)Else;
 @end
 
 typedef struct SomeStruct

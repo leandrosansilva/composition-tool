@@ -78,6 +78,18 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
   clang::Rewriter& _rewriter;
   clang::ASTContext& _context;
   
+  template<typename T>
+  using LookupByName = std::map<llvm::StringRef, T>;
+  
+  LookupByName<clang::ObjCInterfaceDecl*> _knownInterfaceDecls;
+  LookupByName<clang::ObjCProtocolDecl*> _knownPrococolDecls;
+  
+  // More than one category for an interface can be declared
+  LookupByName<std::vector<clang::ObjCCategoryDecl*>> _knownCategoryDecls;
+  
+  LookupByName<std::vector<clang::ObjCMethodDecl*>> _knownInstanceSelectors;
+  LookupByName<std::vector<clang::ObjCMethodDecl*>> _knownClassSelectors;
+  
   template<typename F, typename D>
   auto visit(F function, D decl) const -> bool
   {
@@ -92,44 +104,77 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
 
   auto VisitObjCInterfaceDecl(clang::ObjCInterfaceDecl* o) -> bool
   {
-    return visit([](clang::ObjCInterfaceDecl *o) {
-        //llvm::outs() << "visiting interface decl " << o->getName() << '\n';
-        return true;
-    }, o);
+    _knownInterfaceDecls[o->getName()] = o;
+    return true;
   }
   
   auto VisitObjCProtocolDecl(clang::ObjCProtocolDecl* o) -> bool
   {
-    return visit([](clang::ObjCProtocolDecl *o) {
-        //llvm::outs() << "visiting protocol decl " << o->getName() << '\n';
-        return true;
-    }, o);
+    _knownPrococolDecls[o->getName()] = o;
+    return true;
   }
   
+  auto VisitObjCMethodDecl(clang::ObjCMethodDecl* s) -> bool
+  {
+    s->isInstanceMethod();
+    
+    const auto parents = _context.getParents(*s);
+    
+    for (const auto p: parents) {
+      const auto interfaceParent = p.get<clang::ObjCInterfaceDecl>();
+      const auto protocolParent = p.get<clang::ObjCProtocolDecl>();
+      
+      assert(interfaceParent != nullptr || protocolParent != nullptr);
+      
+      if (interfaceParent != nullptr) {
+        llvm::outs() << "LALALA interface parent: " << interfaceParent->getName() << '\n';
+      }
+      
+      if (protocolParent != nullptr) {
+        llvm::outs() << "LALALA interface parent: " << protocolParent->getName() << '\n';
+      }
+    }
+    
+    if (parents.empty()) {
+      llvm::outs() << "Method with no parent: " << s->getSelector().getAsString() << '\n';
+    }
+    
+    const auto interface = s->getClassInterface();
+    
+    if (interface != nullptr) {
+      llvm::outs() << "selector interface: " << interface->getName() << '\n';
+    }
+    
+    //_knownSelectors[interface->getName()].push_back(s);
+    return true;
+  }
+    
+  auto VisitObjCCategoryDecl(clang::ObjCCategoryDecl* o) -> bool
+  {
+    const auto interface = o->getClassInterface();
+    //llvm::outs() << "LALALA category decl: " << o->getName() << " for interface: " << interface->getName() << '\n';
+    _knownCategoryDecls[interface->getName()].push_back(o);
+    return true;
+  }
+ 
   auto VisitObjCImplementationDecl(clang::ObjCImplementationDecl* o) -> bool
   {
+    // FIXME: do we really need to visit implementations of classes?
     return visit([](clang::ObjCImplementationDecl *o) {
-        //llvm::outs() << "visiting impl decl " << o->getName() << '\n';
+        llvm::outs() << "visiting impl decl " << o->getName() << '\n';
         return true;
     }, o);
   }
   
   auto VisitObjCIvarDecl(clang::ObjCIvarDecl* o) -> bool
   {
-    return visit([](clang::ObjCIvarDecl *o) {
+    // TODO: do the same logic as for properties
+    return visit([](clang::ObjCIvarDecl*) {
         //llvm::outs() << "visiting ivar decl " << o->getName() << '\n';
         return true;
     }, o);
   }
-  
-  auto VisitObjCCategoryDecl(clang::ObjCCategoryDecl* o) -> bool
-  {
-    return visit([this](clang::ObjCCategoryDecl *o) {
-        llvm::outs() << "visiting category decl " << o->getName() << '\n';
-        return true;
-    }, o);
-  }
-  
+ 
   auto VisitObjCPropertyDecl(clang::ObjCPropertyDecl* o) -> bool
   {
     return visit([this](clang::ObjCPropertyDecl *o) {
