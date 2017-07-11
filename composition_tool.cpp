@@ -22,22 +22,77 @@
 namespace {
   const llvm::StringRef PROVIDE_TAG("__provide__");
 
+  const auto objCCategoryHeaderTemplate = R"+-+(
+#pragma once
+#include $INTERFACE_HEADER
+
+@interface $INTERFACE_NAME ($CATEGORY_NAME)
+
+@end
+)+-+";
+
+  // TODO: implement!!!!
+  const auto objCCategoryImplementationTemplate = R"+-+(
+#include $CATEGORY_HEADER
+
+@implementation $INTERFACE_NAME ($CATEGORY_NAME)
+@end
+
+)+-+";
+
   struct KnownDeclarations
   {
     template<typename T>
-    using LookupByName = std::map<llvm::StringRef, T>;
+    using LookupByInterfaceName = std::map<llvm::StringRef, T>;
 
-    LookupByName<clang::ObjCInterfaceDecl*> interfaces;
-    LookupByName<clang::ObjCProtocolDecl*> protocols;
+    LookupByInterfaceName<clang::ObjCInterfaceDecl*> interfaces;
+    LookupByInterfaceName<clang::ObjCProtocolDecl*> protocols;
 
     // More than one category for an interface can be declared
-    LookupByName<std::vector<clang::ObjCCategoryDecl*>> categories;
+    LookupByInterfaceName<std::vector<clang::ObjCCategoryDecl*>> categories;
 
     // a class can obviously have more than one selector,
-    LookupByName<std::vector<clang::ObjCMethodDecl*>> instanceMethods;
-    LookupByName<std::vector<clang::ObjCMethodDecl*>> classMethods;
+    LookupByInterfaceName<std::vector<clang::ObjCMethodDecl*>> instanceMethods;
+    LookupByInterfaceName<std::vector<clang::ObjCMethodDecl*>> classMethods;
   };
-  
+
+  struct GeneratedCodeForInterface
+  {
+    GeneratedCodeForInterface(const GeneratedCodeForInterface&) = delete;
+    GeneratedCodeForInterface(GeneratedCodeForInterface&&) = delete;
+    auto operator=(const GeneratedCodeForInterface&) -> GeneratedCodeForInterface& = delete;
+
+    std::string _buffer;
+    clang::Rewriter _rewriter;
+  };
+
+  // TODO: rename it to manager? I hate manager suffixes!
+  struct GeneratedCodeForInterfaces
+  {
+    // interface name, property name
+    using PropertyPair = std::pair<llvm::StringRef, llvm::StringRef>;
+    std::map<PropertyPair, GeneratedCodeForInterface> _storage;
+
+    auto getContextForInterfaceAndProperty(const clang::ObjCInterfaceDecl* interfaceDecl,
+                                           clang::ObjCPropertyDecl* propertyDecl) -> GeneratedCodeForInterface&
+    {
+      const auto interfaceName = interfaceDecl->getName();
+      const auto propertyName = propertyDecl->getName();
+
+      const auto pair = std::make_pair(interfaceName, propertyName);
+
+      const auto found = _storage.find(pair);
+
+      if (found != std::end(_storage)) {
+        return found->second;
+      }
+
+      _storage.emplace(pair, GeneratedCodeForInterface{._buffer = "", ._rewriter = clang::Rewriter{}});
+
+      return _storage.at(pair);
+    }
+  };
+
   template<typename F, typename D>
   auto runIfInMainFile(clang::ASTContext& context, F function, D decl) -> bool
   {
@@ -62,14 +117,18 @@ namespace {
   }
 
   auto generateExtension(clang::ObjCPropertyDecl* o,
-                         clang::Rewriter& rewriter,
                          clang::ASTContext& context,
                          const std::vector<clang::AnnotateAttr*>& attrs,
-                         const KnownDeclarations& knownDeclarations) -> void
+                         const KnownDeclarations& knownDeclarations,
+                         GeneratedCodeForInterfaces& genManager) -> void
   {
     const auto providedItems = extractProvidedItems(attrs);
+
+    if (providedItems.empty()) {
+      return;
+    }
     
-    const auto parent = [&]() -> const clang::ObjCInterfaceDecl* {
+    const auto interfaceDecl = [&]() -> const clang::ObjCInterfaceDecl* {
       for (const auto p: context.getParents(*o)) {
         const auto interfaceParent = p.get<clang::ObjCInterfaceDecl>();
         const auto implementationParent = p.get<clang::ObjCImplementationDecl>();
@@ -81,13 +140,15 @@ namespace {
       
       return nullptr;
     }();
+
+    const auto& generationContext = genManager.getContextForInterfaceAndProperty(interfaceDecl, o);
     
     llvm::outs() << "property type!!!" << '\n';
     
     // TODO: find all the protocols the type implements.
     // The interface type is just a "plus" for the property type
     
-    const auto interfaceDecl = [=]() -> clang::ObjCInterfaceDecl* {
+    const auto propertyInterfaceDecl = [=]() -> clang::ObjCInterfaceDecl* {
       const auto t = llvm::dyn_cast<clang::ObjCObjectPointerType>(o->getTypeSourceInfo()->getType().getTypePtrOrNull());
       
       assert(t != nullptr);
@@ -112,10 +173,10 @@ namespace {
       return nullptr;
     }();
     
-    assert(interfaceDecl != nullptr);
+    assert(propertyInterfaceDecl != nullptr);
     
-    if (interfaceDecl != nullptr) {
-      llvm::outs() << "property type: " << interfaceDecl->getName() << '\n';
+    if (propertyInterfaceDecl != nullptr) {
+      llvm::outs() << "property type: " << propertyInterfaceDecl->getName() << '\n';
     }
     
     for (const auto& attr: attrs) {
@@ -124,7 +185,7 @@ namespace {
       //o->dump();
     }
     
-    const auto instanceSelectors = knownDeclarations.instanceMethods.find(interfaceDecl->getName());
+    const auto instanceSelectors = knownDeclarations.instanceMethods.find(propertyInterfaceDecl->getName());
 
     // FIXME: error handling
     assert(instanceSelectors != knownDeclarations.instanceMethods.end());
@@ -162,9 +223,9 @@ static llvm::cl::OptionCategory ToolingSampleCategory("Mixin With Steroids");
 
 struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
 {
-  clang::Rewriter& _rewriter;
   clang::ASTContext& _context;
   KnownDeclarations& _knownDeclarations;
+  GeneratedCodeForInterfaces& _genManager;
 
   template<typename F, typename D>
   auto visit(F function, D decl) const -> bool
@@ -172,10 +233,12 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
     return ::runIfInMainFile(_context, function, decl);
   }
   
-  ObjCVisitor(clang::Rewriter &R, clang::ASTContext& context, KnownDeclarations& knownDeclarations):
-  _rewriter(R),
+  ObjCVisitor(clang::ASTContext& context,
+              KnownDeclarations& knownDeclarations,
+              GeneratedCodeForInterfaces& genManager):
   _context(context),
-  _knownDeclarations(knownDeclarations)
+  _knownDeclarations(knownDeclarations),
+  _genManager(genManager)
   {
   }
 
@@ -212,46 +275,6 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
 
     knownSelectors[interface->getName()].push_back(s);
 
-    return true;
-
-    const auto parents = _context.getParents(*s);
-
-    if (parents.empty()) {
-      llvm::outs() << "  Method with no parent!: " << s->getSelector().getAsString() << '\n';
-    }
-
-    for (const auto p: parents) {
-      const auto interfaceParent = p.get<clang::ObjCInterfaceDecl>();
-      const auto implementationParent = p.get<clang::ObjCImplementationDecl>();
-      const auto protocolParent = p.get<clang::ObjCProtocolDecl>();
-      const auto categoryParent = p.get<clang::ObjCCategoryDecl>();
-
-      assert(interfaceParent != nullptr || protocolParent != nullptr
-             || categoryParent != nullptr || implementationParent != nullptr);
-      
-      if (interfaceParent != nullptr) {
-        llvm::outs() << "  interface parent: " << interfaceParent->getName() << '\n';
-      }
-      
-      if (protocolParent != nullptr) {
-        llvm::outs() << "  protocol parent: " << protocolParent->getName() << '\n';
-      }
-
-      if (categoryParent != nullptr) {
-        llvm::outs() << "  category parent: " << categoryParent->getName() << '\n';
-      }
-
-      if (implementationParent != nullptr) {
-        llvm::outs() << "  implementation parent: " << implementationParent->getName() << '\n';
-      }
-    }
-    
-    if (interface != nullptr) {
-      llvm::outs() << "  selector interface: " << interface->getName() << '\n';
-    } else {
-      llvm::outs() << "  selector has no interface" << '\n';
-    }
-    
     return true;
   }
     
@@ -309,7 +332,7 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
         }
       }
 
-      generateExtension(o, _rewriter, _context, provideAnnotationAttrs, _knownDeclarations);
+      generateExtension(o, _context, provideAnnotationAttrs, _knownDeclarations, _genManager);
 
       return true;
     }, o);
@@ -320,9 +343,10 @@ struct ObjCASTConsumer : public clang::ASTConsumer
 {
   KnownDeclarations _knownDeclarations;
   ObjCVisitor _visitor;
+  GeneratedCodeForInterfaces _genManager;
 
-  ObjCASTConsumer(clang::Rewriter &rewriter, clang::ASTContext& context):
-  _visitor({rewriter, context, _knownDeclarations})
+  ObjCASTConsumer(clang::ASTContext& context):
+  _visitor({context, _knownDeclarations, _genManager})
   {
   }
 
@@ -340,32 +364,14 @@ struct ObjCASTConsumer : public clang::ASTConsumer
 // For each source file provided to the tool, a new FrontendAction is created.
 struct MyFrontendAction : public clang::ASTFrontendAction
 {
-  clang::Rewriter _rewriter;
-
   MyFrontendAction()
   {
   }
   
-  auto EndSourceFileAction() -> void final 
-  {
-    return;
-    
-    auto &srcManager = _rewriter.getSourceMgr();
-    
-    llvm::errs() << "** EndSourceFileAction for: "
-                 << srcManager.getFileEntryForID(srcManager.getMainFileID())->getName() << "\n";
-
-    _rewriter.getEditBuffer(srcManager.getMainFileID()).write(llvm::outs());
-  }
-
   auto CreateASTConsumer(clang::CompilerInstance &compilerInstance, llvm::StringRef file) -> std::unique_ptr<clang::ASTConsumer> final
   {
-    llvm::errs() << "** Creating AST consumer for: " << file << "\n";
-    _rewriter.setSourceMgr(compilerInstance.getSourceManager(), compilerInstance.getLangOpts());
-    
     auto& context = compilerInstance.getASTContext();
-    
-    return llvm::make_unique<ObjCASTConsumer>(_rewriter, context);
+    return llvm::make_unique<ObjCASTConsumer>(context);
   }
 };
 
