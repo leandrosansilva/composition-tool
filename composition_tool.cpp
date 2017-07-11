@@ -68,26 +68,63 @@ namespace {
                          const KnownDeclarations& knownDeclarations) -> void
   {
     const auto providedItems = extractProvidedItems(attrs);
-
-    const auto typeInfo = o->getTypeSourceInfo();
-    const auto type = typeInfo->getType().getTypePtrOrNull();
-
-    // FIXME: this is a copy of some code below!!!
-    auto objcObjectType = llvm::dyn_cast<clang::ObjCObjectPointerType>(type);
-
-    assert(objcObjectType != nullptr);
-
-    const auto propertyTypeName = objcObjectType->getInterfaceType()->getTypeClassName();
-
-    llvm::outs() << "Found a object property!!! " << propertyTypeName << '\n';
-
+    
+    const auto parent = [&]() -> const clang::ObjCInterfaceDecl* {
+      for (const auto p: context.getParents(*o)) {
+        const auto interfaceParent = p.get<clang::ObjCInterfaceDecl>();
+        const auto implementationParent = p.get<clang::ObjCImplementationDecl>();
+        
+        if (interfaceParent != nullptr) {
+          return interfaceParent;
+        }
+      }
+      
+      return nullptr;
+    }();
+    
+    llvm::outs() << "property type!!!" << '\n';
+    
+    // TODO: find all the protocols the type implements.
+    // The interface type is just a "plus" for the property type
+    
+    const auto interfaceDecl = [=]() -> clang::ObjCInterfaceDecl* {
+      const auto t = llvm::dyn_cast<clang::ObjCObjectPointerType>(o->getTypeSourceInfo()->getType().getTypePtrOrNull());
+      
+      assert(t != nullptr);
+      
+      t->dump();
+      
+      llvm::outs() << "lalala" << '\n';
+      
+      const auto pointee = t->getPointeeType();
+      
+      const auto interface = pointee.split().Ty->getAs<clang::ObjCInterfaceType>();
+      
+      if (interface != nullptr) {
+        return interface->getDecl();
+      }
+      
+      // when it not a member of an interface, it can be id or a pointer to a class
+      const auto nonInterfacePointer = pointee.split().Ty->getAs<clang::ObjCObjectType>();
+      llvm::outs() << "found a id pointer that implements " << nonInterfacePointer->getNumProtocols() << " protocols" << '\n';
+      nonInterfacePointer->dump();
+      
+      return nullptr;
+    }();
+    
+    assert(interfaceDecl != nullptr);
+    
+    if (interfaceDecl != nullptr) {
+      llvm::outs() << "property type: " << interfaceDecl->getName() << '\n';
+    }
+    
     for (const auto& attr: attrs) {
       const auto annotationValue = attr->getAnnotation();
       llvm::outs() << "Found a property annotation!!! " << annotationValue << '\n';
-      o->dump();
+      //o->dump();
     }
-
-    const auto instanceSelectors = knownDeclarations.instanceMethods.find(propertyTypeName);
+    
+    const auto instanceSelectors = knownDeclarations.instanceMethods.find(interfaceDecl->getName());
 
     // FIXME: error handling
     assert(instanceSelectors != knownDeclarations.instanceMethods.end());
@@ -99,15 +136,17 @@ namespace {
 
         llvm::outs() << "Processing item: " << selectorName << '\n';
 
-        const auto selectorInProperty = std::find_if(std::begin(instanceSelectors->second),
+        const auto selectorInPropertyIt = std::find_if(std::begin(instanceSelectors->second),
                                                      std::end(instanceSelectors->second),
                                                      [=](const clang::ObjCMethodDecl* methodDecl) -> bool {
-                                                       llvm::outs() << "Comparing " << methodDecl->getSelector().getAsString()
-                                                                    << " to " << selectorName << '\n';
                                                        return methodDecl->getSelector().getAsString() == selectorName;
                                                      });
 
-        assert(selectorInProperty != std::end(instanceSelectors->second));
+        assert(selectorInPropertyIt != std::end(instanceSelectors->second));
+        
+        const auto selectorInProperty = *selectorInPropertyIt;
+        
+        selectorInProperty->dump();
       }
     }
 
@@ -142,6 +181,11 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
 
   auto VisitObjCInterfaceDecl(clang::ObjCInterfaceDecl* o) -> bool
   {
+    visit([](clang::ObjCInterfaceDecl* o) {
+      llvm::outs() << "New interface: " << o->getName() << '\n';
+      return true;
+    }, o);
+    
     _knownDeclarations.interfaces[o->getName()] = o;
     return true;
   }
@@ -178,9 +222,9 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
 
     for (const auto p: parents) {
       const auto interfaceParent = p.get<clang::ObjCInterfaceDecl>();
+      const auto implementationParent = p.get<clang::ObjCImplementationDecl>();
       const auto protocolParent = p.get<clang::ObjCProtocolDecl>();
       const auto categoryParent = p.get<clang::ObjCCategoryDecl>();
-      const auto implementationParent = p.get<clang::ObjCImplementationDecl>();
 
       assert(interfaceParent != nullptr || protocolParent != nullptr
              || categoryParent != nullptr || implementationParent != nullptr);

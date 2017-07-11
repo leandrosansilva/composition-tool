@@ -23,8 +23,8 @@ typedef struct SomeStruct
 
 - (NSString*)invertName;
 
-- (NSString*)concatenameWithPrefix:(NSString*)prefix
-                             sufix:(NSString*)suffix;
+- (NSString*)concatenateWithPrefix:(NSString*)prefix
+                             suffix:(NSString*)suffix;
 
 - (SomeStruct)buildSomeStruct;
 

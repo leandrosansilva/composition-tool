@@ -10,7 +10,7 @@
 
 @interface MixinUser : NSObject
 {
-	NSDictionary* aDictionary PROVIDE(@*);
+	NSDictionary* aDictionary PROVIDE(-getObject:forKey);
 }
 
 @property (readonly) MixinWithSomething* mws
@@ -27,10 +27,14 @@
 
 @property int anScalarProperty;
 
-@property id<SomeDelegate> aProtocoledProperty
-	PROVIDE(@* -* +*);
+// TODO: re-activate when implement support for protocols
+//@property NSString<SomeDelegate>* aStringedProtocoledProperty
+//	PROVIDE(@length);
 
-@property SomeStruct anStructProperty;
+//@property id<SomeDelegate> bProtocoledProperty
+//	PROVIDE(@* -* +*);
+
+@property SomeStruct aStructProperty;
 
 @end
 
@@ -47,4 +51,9 @@
  TODO: on wildcards, do not override properties and selectors
  
  TODO: Forbid methods that start with -init to be provided with error message!
+
+ TODO: handle properties whose type is parameterized (like c++ template params)
+
+ TODO: actually any type specifier can specify protocols, and id is a generic pointer (void*),
+ handled differently by clang
 */
