@@ -8,17 +8,18 @@
 #include <sstream>
 #include <string>
 
-#include "clang/AST/AST.h"
-#include "clang/AST/ASTConsumer.h"
-#include "clang/AST/RecursiveASTVisitor.h"
-#include "clang/Frontend/ASTConsumers.h"
-#include "clang/Frontend/CompilerInstance.h"
-#include "clang/Frontend/FrontendActions.h"
-#include "clang/Rewrite/Core/Rewriter.h"
-#include "clang/Tooling/CommonOptionsParser.h"
-#include "clang/Tooling/Tooling.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/FormatVariadic.h"
+#include <clang/AST/AST.h>
+#include <clang/AST/ASTConsumer.h>
+#include <clang/AST/RecursiveASTVisitor.h>
+#include <clang/Frontend/ASTConsumers.h>
+#include <clang/Frontend/CompilerInstance.h>
+#include <clang/Frontend/FrontendActions.h>
+#include <clang/Rewrite/Core/Rewriter.h>
+#include <clang/Tooling/CommonOptionsParser.h>
+#include <clang/Tooling/Tooling.h>
+#include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/FormatVariadic.h>
+#include <clang/Lex/Lexer.h>
 
 namespace {
   const llvm::StringRef PROVIDE_TAG("__provide__");
@@ -229,6 +230,20 @@ namespace {
         
         const auto selectorInProperty = *selectorInPropertyIt;
         
+        const auto locStart = selectorInProperty->getLocStart();
+        const auto locEnd = selectorInProperty->getDeclaratorEndLoc();
+        
+        const auto buffer = context.compilerInstance->getSourceManager().getBuffer(context.compilerInstance->getSourceManager().getMainFileID());
+        
+        //clang::Lexer::getLocForEndOfToken(locEnd)
+        
+        const auto codeBegin = context.compilerInstance->getSourceManager().getCharacterData(locStart);
+        const auto codeEnd = context.compilerInstance->getSourceManager().getCharacterData(locEnd);
+        
+        const auto c = llvm::StringRef(codeBegin, codeEnd - codeBegin);
+        
+        llvm::outs() << "Selector code: " << c << '\n';
+        
         selectorInProperty->dump();
       }
     }
@@ -241,7 +256,7 @@ namespace {
   }
 }
 
-static llvm::cl::OptionCategory ToolingSampleCategory("Mixin With Steroids");
+static llvm::cl::OptionCategory commandLineCategory("Mixin With Steroids");
 
 struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
 {
@@ -399,7 +414,7 @@ struct MyFrontendAction : public clang::ASTFrontendAction
 
 auto main(int argc, const char **argv) -> int
 {
-  auto op = clang::tooling::CommonOptionsParser(argc, argv, ToolingSampleCategory);
+  auto op = clang::tooling::CommonOptionsParser(argc, argv, commandLineCategory);
   auto tool = clang::tooling::ClangTool(op.getCompilations(), op.getSourcePathList());
 
   return tool.run(clang::tooling::newFrontendActionFactory<MyFrontendAction>().get());
