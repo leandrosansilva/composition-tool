@@ -25,19 +25,18 @@ namespace {
   const llvm::StringRef PROVIDE_TAG("__provide__");
 
   const auto objCCategoryHeaderFormat = R"+-+(
-#pragma once
-#include "{0}"
+@interface {0} ({1}__{2})
 
-@interface {1} ({2}__{3})
+{3}
 
 @end
 )+-+";
 
   // TODO: implement!!!!
   const auto objCCategoryImplementationFormat = R"+-+(
-#include "{0}"
+@implementation {0} ({1}__{2})
 
-@implementation {1} ({2}__{3})
+{3}
 
 @end
 
@@ -63,57 +62,6 @@ namespace {
     // a class can obviously have more than one selector,
     LookupByInterfaceName<std::vector<clang::ObjCMethodDecl*>> instanceMethods;
     LookupByInterfaceName<std::vector<clang::ObjCMethodDecl*>> classMethods;
-  };
-
-  struct GeneratedCodeForInterface
-  {
-    GeneratedCodeForInterface(const GeneratedCodeForInterface&) = default;
-    GeneratedCodeForInterface(GeneratedCodeForInterface&&) = default;
-    auto operator=(const GeneratedCodeForInterface&) -> GeneratedCodeForInterface& = default;
-
-    std::string _buffer;
-    clang::Rewriter _rewriter;
-  };
-
-  // TODO: rename it to manager? I hate manager suffixes!
-  struct GeneratedCodeForInterfaces
-  {
-    // interface name, property name
-    using PropertyPair = std::pair<llvm::StringRef, llvm::StringRef>;
-    std::map<PropertyPair, GeneratedCodeForInterface> _storage;
-
-    auto getContext(const clang::ObjCInterfaceDecl* interfaceDecl,
-                    clang::ObjCPropertyDecl* propertyDecl,
-                    clang::ObjCInterfaceDecl* propertyTypeDecl,
-                    CodeGeneratorContext& context) -> GeneratedCodeForInterface&
-    {
-      const auto interfaceName = interfaceDecl->getName();
-      const auto propertyName = propertyDecl->getName();
-      const auto propertyTypeName = propertyTypeDecl->getName();
-
-      const auto pair = std::make_pair(interfaceName, propertyName);
-
-      const auto found = _storage.find(pair);
-
-      if (found != std::end(_storage)) {
-        return found->second;
-      }
-      
-      const auto formattedHeader = llvm::formatv(objCCategoryHeaderFormat,
-                                                 context.inputFilename,
-                                                 interfaceName,
-                                                 propertyName,
-                                                 propertyTypeName);
-      
-      llvm::outs() << "output header: " << formattedHeader << '\n';
-      
-      _storage.emplace(pair, GeneratedCodeForInterface{
-        formattedHeader, 
-        clang::Rewriter{context.compilerInstance->getSourceManager(),
-          context.compilerInstance->getLangOpts()}});
-
-      return _storage.at(pair);
-    }
   };
 
   template<typename F, typename D>
@@ -142,8 +90,7 @@ namespace {
   auto generateExtension(clang::ObjCPropertyDecl* o,
                          CodeGeneratorContext& context,
                          const std::vector<clang::AnnotateAttr*>& attrs,
-                         const KnownDeclarations& knownDeclarations,
-                         GeneratedCodeForInterfaces& genManager) -> void
+                         const KnownDeclarations& knownDeclarations) -> void
   {
     const auto providedItems = extractProvidedItems(attrs);
 
@@ -194,8 +141,6 @@ namespace {
       return nullptr;
     }();
     
-    const auto& generationContext = genManager.getContext(interfaceDecl, o, propertyInterfaceDecl, context);
-    
     assert(propertyInterfaceDecl != nullptr);
     
     if (propertyInterfaceDecl != nullptr) {
@@ -212,6 +157,8 @@ namespace {
 
     // FIXME: error handling
     assert(instanceSelectors != knownDeclarations.instanceMethods.end());
+    
+    auto providedBodyForHeader = std::string{};
 
     for (const auto item: providedItems) {
       // instance methods (FIXME: will fail with wildcard -*)
@@ -231,7 +178,7 @@ namespace {
         const auto selectorInProperty = *selectorInPropertyIt;
         
         const auto locStart = selectorInProperty->getLocStart();
-        const auto locEnd = selectorInProperty->getDeclaratorEndLoc();
+        const auto locEnd = selectorInProperty->getLocEnd();
         
         const auto buffer = context.compilerInstance->getSourceManager().getBuffer(context.compilerInstance->getSourceManager().getMainFileID());
         
@@ -242,11 +189,18 @@ namespace {
         
         const auto c = llvm::StringRef(codeBegin, codeEnd - codeBegin);
         
-        llvm::outs() << "Selector code: " << c << '\n';
-        
-        selectorInProperty->dump();
+        providedBodyForHeader += c;
+        providedBodyForHeader += ";\n";
       }
     }
+    
+    const auto formattedHeader = llvm::formatv(objCCategoryHeaderFormat,
+                                               interfaceDecl->getName(),
+                                               propertyInterfaceDecl->getName(),
+                                               o->getName(),
+                                               providedBodyForHeader);
+      
+    llvm::outs() << "generated header: " << formattedHeader << '\n';
 
     llvm::outs() << "known interfaces: " << knownDeclarations.interfaces.size() << '\n';
     llvm::outs() << "known protocols: " << knownDeclarations.protocols.size() << '\n';
@@ -262,7 +216,6 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
 {
   CodeGeneratorContext _context;
   KnownDeclarations& _knownDeclarations;
-  GeneratedCodeForInterfaces& _genManager;
 
   template<typename F, typename D>
   auto visit(F function, D decl) const -> bool
@@ -271,11 +224,9 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
   }
   
   ObjCVisitor(CodeGeneratorContext context,
-              KnownDeclarations& knownDeclarations,
-              GeneratedCodeForInterfaces& genManager):
+              KnownDeclarations& knownDeclarations):
   _context(context),
-  _knownDeclarations(knownDeclarations),
-  _genManager(genManager)
+  _knownDeclarations(knownDeclarations)
   {
   }
 
@@ -369,7 +320,7 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
         }
       }
 
-      generateExtension(o, _context, provideAnnotationAttrs, _knownDeclarations, _genManager);
+      generateExtension(o, _context, provideAnnotationAttrs, _knownDeclarations);
 
       return true;
     }, o);
@@ -380,10 +331,9 @@ struct ObjCASTConsumer : public clang::ASTConsumer
 {
   KnownDeclarations _knownDeclarations;
   ObjCVisitor _visitor;
-  GeneratedCodeForInterfaces _genManager;
 
   ObjCASTConsumer(CodeGeneratorContext context):
-  _visitor({context, _knownDeclarations, _genManager})
+  _visitor({context, _knownDeclarations})
   {
   }
 

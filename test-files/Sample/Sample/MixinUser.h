@@ -28,7 +28,7 @@
 @property int anScalarProperty;
 
 // TODO: re-activate when implement support for protocols
-//@property NSString<SomeDelegate>* aStringedProtocoledProperty
+//@property NSString<SomeDelegate, SomeOtherDelegate>* aStringedProtocoledProperty
 //	PROVIDE(@length);
 
 //@property id<SomeDelegate> bProtocoledProperty
@@ -57,4 +57,6 @@
 
  TODO: actually any type specifier can specify protocols, and id is a generic pointer (void*),
  handled differently by clang
+
+ TODO: 
 */
