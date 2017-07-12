@@ -23,7 +23,7 @@
  - (NSString*)concatenateWithPrefix:(NSString*)prefix suffix:(NSString*)suffix;
 */
 
-@property NSNumber* aNormalProperty;
+@property NSNumber* aNormalProperty PROVIDE(-intValue);
 
 @property int anScalarProperty;
 
@@ -51,6 +51,7 @@
  TODO: on wildcards, do not override properties and selectors
  
  TODO: Forbid methods that start with -init to be provided with error message!
+ 	as well as dealloc methods and other "special" ones that make no sense to be provided.
 
  TODO: handle properties whose type is parameterized (like c++ template params)
 

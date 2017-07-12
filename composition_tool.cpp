@@ -18,27 +18,35 @@
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Tooling.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/FormatVariadic.h"
 
 namespace {
   const llvm::StringRef PROVIDE_TAG("__provide__");
 
-  const auto objCCategoryHeaderTemplate = R"+-+(
+  const auto objCCategoryHeaderFormat = R"+-+(
 #pragma once
-#include $INTERFACE_HEADER
+#include "{0}"
 
-@interface $INTERFACE_NAME ($CATEGORY_NAME)
+@interface {1} ({2}__{3})
 
 @end
 )+-+";
 
   // TODO: implement!!!!
-  const auto objCCategoryImplementationTemplate = R"+-+(
-#include $CATEGORY_HEADER
+  const auto objCCategoryImplementationFormat = R"+-+(
+#include "{0}"
 
-@implementation $INTERFACE_NAME ($CATEGORY_NAME)
+@implementation {1} ({2}__{3})
+
 @end
 
 )+-+";
+
+  struct CodeGeneratorContext
+  {
+    clang::CompilerInstance* compilerInstance;
+    llvm::StringRef inputFilename;
+  };
 
   struct KnownDeclarations
   {
@@ -58,9 +66,9 @@ namespace {
 
   struct GeneratedCodeForInterface
   {
-    GeneratedCodeForInterface(const GeneratedCodeForInterface&) = delete;
-    GeneratedCodeForInterface(GeneratedCodeForInterface&&) = delete;
-    auto operator=(const GeneratedCodeForInterface&) -> GeneratedCodeForInterface& = delete;
+    GeneratedCodeForInterface(const GeneratedCodeForInterface&) = default;
+    GeneratedCodeForInterface(GeneratedCodeForInterface&&) = default;
+    auto operator=(const GeneratedCodeForInterface&) -> GeneratedCodeForInterface& = default;
 
     std::string _buffer;
     clang::Rewriter _rewriter;
@@ -73,11 +81,14 @@ namespace {
     using PropertyPair = std::pair<llvm::StringRef, llvm::StringRef>;
     std::map<PropertyPair, GeneratedCodeForInterface> _storage;
 
-    auto getContextForInterfaceAndProperty(const clang::ObjCInterfaceDecl* interfaceDecl,
-                                           clang::ObjCPropertyDecl* propertyDecl) -> GeneratedCodeForInterface&
+    auto getContext(const clang::ObjCInterfaceDecl* interfaceDecl,
+                    clang::ObjCPropertyDecl* propertyDecl,
+                    clang::ObjCInterfaceDecl* propertyTypeDecl,
+                    CodeGeneratorContext& context) -> GeneratedCodeForInterface&
     {
       const auto interfaceName = interfaceDecl->getName();
       const auto propertyName = propertyDecl->getName();
+      const auto propertyTypeName = propertyTypeDecl->getName();
 
       const auto pair = std::make_pair(interfaceName, propertyName);
 
@@ -86,8 +97,19 @@ namespace {
       if (found != std::end(_storage)) {
         return found->second;
       }
-
-      _storage.emplace(pair, GeneratedCodeForInterface{._buffer = "", ._rewriter = clang::Rewriter{}});
+      
+      const auto formattedHeader = llvm::formatv(objCCategoryHeaderFormat,
+                                                 context.inputFilename,
+                                                 interfaceName,
+                                                 propertyName,
+                                                 propertyTypeName);
+      
+      llvm::outs() << "output header: " << formattedHeader << '\n';
+      
+      _storage.emplace(pair, GeneratedCodeForInterface{
+        formattedHeader, 
+        clang::Rewriter{context.compilerInstance->getSourceManager(),
+          context.compilerInstance->getLangOpts()}});
 
       return _storage.at(pair);
     }
@@ -117,7 +139,7 @@ namespace {
   }
 
   auto generateExtension(clang::ObjCPropertyDecl* o,
-                         clang::ASTContext& context,
+                         CodeGeneratorContext& context,
                          const std::vector<clang::AnnotateAttr*>& attrs,
                          const KnownDeclarations& knownDeclarations,
                          GeneratedCodeForInterfaces& genManager) -> void
@@ -128,8 +150,10 @@ namespace {
       return;
     }
     
+    auto& astContext = context.compilerInstance->getASTContext();
+    
     const auto interfaceDecl = [&]() -> const clang::ObjCInterfaceDecl* {
-      for (const auto p: context.getParents(*o)) {
+      for (const auto p: astContext.getParents(*o)) {
         const auto interfaceParent = p.get<clang::ObjCInterfaceDecl>();
         const auto implementationParent = p.get<clang::ObjCImplementationDecl>();
         
@@ -141,10 +165,6 @@ namespace {
       return nullptr;
     }();
 
-    const auto& generationContext = genManager.getContextForInterfaceAndProperty(interfaceDecl, o);
-    
-    llvm::outs() << "property type!!!" << '\n';
-    
     // TODO: find all the protocols the type implements.
     // The interface type is just a "plus" for the property type
     
@@ -172,6 +192,8 @@ namespace {
       
       return nullptr;
     }();
+    
+    const auto& generationContext = genManager.getContext(interfaceDecl, o, propertyInterfaceDecl, context);
     
     assert(propertyInterfaceDecl != nullptr);
     
@@ -223,17 +245,17 @@ static llvm::cl::OptionCategory ToolingSampleCategory("Mixin With Steroids");
 
 struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
 {
-  clang::ASTContext& _context;
+  CodeGeneratorContext _context;
   KnownDeclarations& _knownDeclarations;
   GeneratedCodeForInterfaces& _genManager;
 
   template<typename F, typename D>
   auto visit(F function, D decl) const -> bool
   {
-    return ::runIfInMainFile(_context, function, decl);
+    return ::runIfInMainFile(_context.compilerInstance->getASTContext(), function, decl);
   }
   
-  ObjCVisitor(clang::ASTContext& context,
+  ObjCVisitor(CodeGeneratorContext context,
               KnownDeclarations& knownDeclarations,
               GeneratedCodeForInterfaces& genManager):
   _context(context),
@@ -345,7 +367,7 @@ struct ObjCASTConsumer : public clang::ASTConsumer
   ObjCVisitor _visitor;
   GeneratedCodeForInterfaces _genManager;
 
-  ObjCASTConsumer(clang::ASTContext& context):
+  ObjCASTConsumer(CodeGeneratorContext context):
   _visitor({context, _knownDeclarations, _genManager})
   {
   }
@@ -368,10 +390,10 @@ struct MyFrontendAction : public clang::ASTFrontendAction
   {
   }
   
-  auto CreateASTConsumer(clang::CompilerInstance &compilerInstance, llvm::StringRef file) -> std::unique_ptr<clang::ASTConsumer> final
+  auto CreateASTConsumer(clang::CompilerInstance &compilerInstance,
+                         llvm::StringRef file) -> std::unique_ptr<clang::ASTConsumer> final
   {
-    auto& context = compilerInstance.getASTContext();
-    return llvm::make_unique<ObjCASTConsumer>(context);
+    return llvm::make_unique<ObjCASTConsumer>(CodeGeneratorContext{&compilerInstance, file});
   }
 };
 
@@ -382,3 +404,4 @@ auto main(int argc, const char **argv) -> int
 
   return tool.run(clang::tooling::newFrontendActionFactory<MyFrontendAction>().get());
 }
+
