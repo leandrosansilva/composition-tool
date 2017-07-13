@@ -5,6 +5,11 @@
 //
 //------------------------------------------------------------------------------
 
+/*
+ * TODO: Refactor all this code, extracting each thing to a resusable 
+ * and self-contained function.
+*/
+
 #include <sstream>
 #include <string>
 
@@ -159,7 +164,8 @@ namespace {
     assert(instanceSelectors != knownDeclarations.instanceMethods.end());
     
     auto providedBodyForHeader = std::string{};
-
+    auto providedBodyForImplementation = std::string{};
+    
     for (const auto item: providedItems) {
       // instance methods (FIXME: will fail with wildcard -*)
       if (item.startswith("-")) {
