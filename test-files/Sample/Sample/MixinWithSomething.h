@@ -26,7 +26,7 @@ typedef struct SomeStruct
 - (NSString*)concatenateWithPrefix:(NSString*)prefix
                              suffix:(NSString*)suffix;
 
-- (SomeStruct)buildSomeStruct;
+- (SomeStruct)buildSomeStruct:(int)flag;
 
 @property (readonly) NSNumber* length;
 

@@ -14,8 +14,8 @@
 }
 
 @property (readonly) MixinWithSomething* mws
-	PROVIDE(@length -invertName -concatenateWithPrefix:suffix:)
-	PROVIDE(-buildSomeStruct);
+	PROVIDE(@length -concatenateWithPrefix:suffix:)
+	PROVIDE(-buildSomeStruct: -invertName);
 
 /* Generated in the file generated/MixinUser+mixin_property_mws_MixinWithSomething.h
  @property (readonly) NSNumber* length;
@@ -52,11 +52,13 @@
  
  TODO: Forbid methods that start with -init to be provided with error message!
  	as well as dealloc methods and other "special" ones that make no sense to be provided.
+	  -> thinking better, the logic of not overriding methods from parents already solves
+		   for dealloc, etc. as they are defined in NSObject
 
  TODO: handle properties whose type is parameterized (like c++ template params)
 
  TODO: actually any type specifier can specify protocols, and id is a generic pointer (void*),
  handled differently by clang
 
- TODO: 
+ TODO: handle variadic parameter methods
 */

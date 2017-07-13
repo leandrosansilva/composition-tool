@@ -37,14 +37,16 @@ namespace {
 @end
 )+-+";
 
-  // TODO: implement!!!!
   const auto objCCategoryImplementationFormat = R"+-+(
 @implementation {0} ({1}__{2})
-
 {3}
-
 @end
+)+-+";
 
+  const auto objCSelectorImplementationFormat = R"+-+(
+{0} {
+  return [{1}{2} {3}];
+}
 )+-+";
 
   struct CodeGeneratorContext
@@ -197,6 +199,48 @@ namespace {
         
         providedBodyForHeader += c;
         providedBodyForHeader += ";\n";
+
+        llvm::outs() << "before params\n";
+
+        const auto& parameters = selectorInProperty->parameters();
+
+        const auto callBody = [&]() -> std::string {
+          if (parameters.size() == 0) {
+            return selectorName;
+          }
+
+          auto paramLabels = llvm::SmallVector<llvm::StringRef, 10>{};
+          selectorName.split(paramLabels, ":", -1, false);
+
+          auto callBody = std::string{};
+
+          // FIXME: it fails for methods with no arguments!
+          assert(paramLabels.size() == parameters.size());
+
+          for (size_t size = parameters.size(), i = 0u; i < size; i++) {
+            callBody += paramLabels[i];
+            callBody += ":";
+            callBody += parameters[i]->getName();
+            if (i < size - 1) {
+              callBody += " ";
+            }
+            llvm::outs() << paramLabels[i] << ":" << parameters[i]->getName() << " " << "\n";
+          }
+
+          return callBody;
+        }();
+
+        const auto selectorDefinition = llvm::formatv(objCSelectorImplementationFormat,
+                                                      c,
+                                                      "self.",
+                                                      o->getName(),
+                                                      callBody);
+
+        providedBodyForImplementation += selectorDefinition;
+
+        llvm::outs() << "body: " << selectorDefinition << '\n';
+
+        llvm::outs() << "after params\n";
       }
     }
     
@@ -205,8 +249,15 @@ namespace {
                                                propertyInterfaceDecl->getName(),
                                                o->getName(),
                                                providedBodyForHeader);
+
+    const auto formattedImplementation = llvm::formatv(objCCategoryImplementationFormat,
+                                                       interfaceDecl->getName(),
+                                                       propertyInterfaceDecl->getName(),
+                                                       o->getName(),
+                                                       providedBodyForImplementation);
       
     llvm::outs() << "generated header: " << formattedHeader << '\n';
+    llvm::outs() << "generated implementation: " << formattedImplementation << '\n';
 
     llvm::outs() << "known interfaces: " << knownDeclarations.interfaces.size() << '\n';
     llvm::outs() << "known protocols: " << knownDeclarations.protocols.size() << '\n';
