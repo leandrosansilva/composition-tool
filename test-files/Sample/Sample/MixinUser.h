@@ -61,4 +61,6 @@
  handled differently by clang
 
  TODO: handle variadic parameter methods
+
+ TODO: support class property (@property (class, readonly) NSString* someProperty)
 */

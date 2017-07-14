@@ -69,6 +69,8 @@ namespace {
     // a class can obviously have more than one selector,
     LookupByInterfaceName<std::vector<clang::ObjCMethodDecl*>> instanceMethods;
     LookupByInterfaceName<std::vector<clang::ObjCMethodDecl*>> classMethods;
+    
+    LookupByInterfaceName<std::vector<clang::ObjCPropertyDecl*>> properties;
   };
 
   template<typename F, typename D>
@@ -93,6 +95,42 @@ namespace {
     
     return items;
   }
+  
+  template<typename NodeType>
+  auto getParent(const CodeGeneratorContext& context, const NodeType o) -> const clang::ObjCContainerDecl*
+  {
+    assert(o != nullptr);
+    
+    auto& astContext = context.compilerInstance->getASTContext();
+    
+    for (const auto p: astContext.getParents(*o)) {
+        const auto parent = p.template get<clang::ObjCContainerDecl>();
+        
+        if (parent != nullptr) {
+          return parent;
+        }
+      }
+      
+      return nullptr;
+  }
+  
+  template<typename NodeType>
+  auto getInterfaceForMember(const CodeGeneratorContext& context, const NodeType member) -> const clang::ObjCInterfaceDecl*
+  {
+    const auto parent = getParent(context, member);
+    
+    assert(parent != nullptr);
+    
+    if (const auto interface = llvm::dyn_cast<clang::ObjCInterfaceDecl>(parent)) {
+      return interface;
+    }
+    
+    if (const auto category = llvm::dyn_cast<clang::ObjCCategoryDecl>(parent)) {
+      return category->getClassInterface();
+    }
+    
+    return nullptr;
+  }
 
   auto generateExtension(clang::ObjCPropertyDecl* o,
                          CodeGeneratorContext& context,
@@ -105,20 +143,13 @@ namespace {
       return;
     }
     
-    auto& astContext = context.compilerInstance->getASTContext();
+    const auto parent = getParent(context, o);
     
-    const auto interfaceDecl = [&]() -> const clang::ObjCInterfaceDecl* {
-      for (const auto p: astContext.getParents(*o)) {
-        const auto interfaceParent = p.get<clang::ObjCInterfaceDecl>();
-        const auto implementationParent = p.get<clang::ObjCImplementationDecl>();
-        
-        if (interfaceParent != nullptr) {
-          return interfaceParent;
-        }
-      }
-      
-      return nullptr;
-    }();
+    assert(parent != nullptr);
+    
+    const auto interfaceDecl = llvm::dyn_cast<clang::ObjCInterfaceDecl>(parent);
+    
+    assert(interfaceDecl != nullptr);
 
     // TODO: find all the protocols the type implements.
     // The interface type is just a "plus" for the property type
@@ -161,6 +192,7 @@ namespace {
     }
     
     const auto instanceSelectors = knownDeclarations.instanceMethods.find(propertyInterfaceDecl->getName());
+    const auto properties = knownDeclarations.properties.find(propertyInterfaceDecl->getName());
 
     // FIXME: error handling
     assert(instanceSelectors != knownDeclarations.instanceMethods.end());
@@ -169,12 +201,12 @@ namespace {
     auto providedBodyForImplementation = std::string{};
     
     for (const auto item: providedItems) {
+      llvm::outs() << "Processing item: " << item << '\n';
+      
       // instance methods (FIXME: will fail with wildcard -*)
       if (item.startswith("-")) {
         const auto selectorName = item.substr(1);
-
-        llvm::outs() << "Processing item: " << selectorName << '\n';
-
+        
         const auto selectorInPropertyIt = std::find_if(std::begin(instanceSelectors->second),
                                                      std::end(instanceSelectors->second),
                                                      [=](const clang::ObjCMethodDecl* methodDecl) -> bool {
@@ -194,7 +226,6 @@ namespace {
         
         const auto codeBegin = context.compilerInstance->getSourceManager().getCharacterData(locStart);
         const auto codeEnd = context.compilerInstance->getSourceManager().getCharacterData(locEnd);
-        
         const auto c = llvm::StringRef(codeBegin, codeEnd - codeBegin);
         
         providedBodyForHeader += c;
@@ -241,6 +272,34 @@ namespace {
         llvm::outs() << "body: " << selectorDefinition << '\n';
 
         llvm::outs() << "after params\n";
+      }
+      
+      if (item.startswith("@")) {
+        const auto propertyName = item.substr(1);
+        
+        const auto propertyIt = std::find_if(std::begin(properties->second),
+                                                     std::end(properties->second),
+                                                     [=](const clang::ObjCPropertyDecl* propertyDecl) -> bool {
+                                                       return propertyDecl->getName() == propertyName;
+                                                     });
+
+        assert(propertyIt != std::end(properties->second));
+        
+        const auto propertyDecl = *propertyIt;
+        
+        assert(propertyDecl != nullptr);
+        
+        const auto locStart = propertyDecl->getLocStart();
+        const auto locEnd = propertyDecl->getLocEnd();
+        
+        const auto codeBegin = context.compilerInstance->getSourceManager().getCharacterData(locStart);
+        const auto codeEnd = context.compilerInstance->getSourceManager().getCharacterData(locEnd);
+        const auto c = llvm::StringRef(codeBegin, codeEnd - codeBegin);
+        
+        llvm::outs() << "Property code: " << c << '\n';
+        
+        const auto getterMethodDecl = propertyDecl->getGetterMethodDecl();
+        const auto setterMethodDecl = propertyDecl->getSetterMethodDecl();
       }
     }
     
@@ -289,8 +348,10 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
 
   auto VisitObjCInterfaceDecl(clang::ObjCInterfaceDecl* o) -> bool
   {
+    llvm::outs() << "New interface: " << o->getName() << '\n';
+    o->getLocation().print(llvm::outs(), _context.compilerInstance->getSourceManager());
+    
     visit([](clang::ObjCInterfaceDecl* o) {
-      llvm::outs() << "New interface: " << o->getName() << '\n';
       return true;
     }, o);
     
@@ -351,6 +412,13 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
  
   auto VisitObjCPropertyDecl(clang::ObjCPropertyDecl* o) -> bool
   {
+    llvm::outs() << "Visiting property " << o->getName() << '\n';
+    
+    const auto interface = getInterfaceForMember(_context, o);
+    assert(interface != nullptr);
+    
+    _knownDeclarations.properties[interface->getName()].push_back(o);
+    
     return visit([this](clang::ObjCPropertyDecl *o) {
       const auto typeInfo = o->getTypeSourceInfo();
       const auto type = typeInfo->getType().getTypePtrOrNull();
