@@ -161,28 +161,35 @@ namespace {
       }
     }
     
+    // TODO: Go up to parents until finds the member or give up
+    
     return nullptr;   
   }
   
-  auto getSelectorForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef selectorName) -> clang::ObjCMethodDecl*
+  auto getInstanceSelectorForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef selectorName) -> clang::ObjCMethodDecl*
   {
     const auto filter = [=](const clang::ObjCMethodDecl* methodDecl) {
       return methodDecl->getSelector().getAsString() == selectorName;
     };
     
-    const auto interfaceExtractor = [](clang::ObjCInterfaceDecl* propertyInterfaceDecl) {
-      return propertyInterfaceDecl->instance_methods();
+    const auto extractor = [](clang::ObjCContainerDecl* container) {
+      return container->instance_methods();
     };
     
-    const auto categoryExtractor = [](clang::ObjCCategoryDecl* category) {
-      return category->instance_methods();
+    return getMemberForInterface<clang::ObjCMethodDecl*>(propertyInterfaceDecl, filter, extractor, extractor, extractor);
+  }
+  
+  auto getInstancePropertyForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef propertyName) -> clang::ObjCPropertyDecl*
+  {
+    const auto filter = [=](const clang::ObjCPropertyDecl* propertyDecl) {
+      return propertyDecl->getName() == propertyName;
     };
     
-    const auto protocolExtractor = [](clang::ObjCProtocolDecl* protocol) {
-      return protocol->instance_methods();
+    const auto extractor = [](clang::ObjCContainerDecl* container) {
+      return container->instance_properties();
     };
     
-    return getMemberForInterface<clang::ObjCMethodDecl*>(propertyInterfaceDecl, filter, interfaceExtractor, categoryExtractor, protocolExtractor);
+    return getMemberForInterface<clang::ObjCPropertyDecl*>(propertyInterfaceDecl, filter, extractor, extractor, extractor);
   }
 
   auto generateExtension(clang::ObjCPropertyDecl* o,
@@ -251,7 +258,7 @@ namespace {
       if (item.startswith("-")) {
         const auto selectorName = item.substr(1);
 
-        const auto selectorInProperty = getSelectorForInterface(propertyInterfaceDecl, selectorName);
+        const auto selectorInProperty = getInstanceSelectorForInterface(propertyInterfaceDecl, selectorName);
         
         assert(selectorInProperty != nullptr);
 
