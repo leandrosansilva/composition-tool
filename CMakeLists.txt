@@ -12,7 +12,7 @@ separate_arguments(LLVM_LIBS)
 separate_arguments(CLANG_LIBS)
 
 # I know, I know, those flags should not be added like this
-add_definitions("-std=c++14 -Wall -Wextra")
+add_definitions("-std=c++14 -Wall -Wextra -Werror=return-type")
 
 add_executable(composition_tool composition_tool.cpp)
 

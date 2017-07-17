@@ -61,11 +61,7 @@ namespace {
     using LookupByInterfaceName = std::map<llvm::StringRef, T>;
 
     LookupByInterfaceName<clang::ObjCInterfaceDecl*> interfaces;
-    LookupByInterfaceName<clang::ObjCProtocolDecl*> protocols;
     LookupByInterfaceName<clang::ObjCInterfaceDecl*> parent;
-
-    // More than one category for an interface can be declared
-    LookupByInterfaceName<std::vector<clang::ObjCCategoryDecl*>> categories;
   };
 
   template<typename F, typename D>
@@ -126,51 +122,37 @@ namespace {
     
     return nullptr;
   }
-
+  
   auto getSelectorForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef selectorName) -> clang::ObjCMethodDecl*
   {
     const auto methods = propertyInterfaceDecl->instance_methods();
-
-    const auto itInMainInterfaceDecl = std::find_if(methods.begin(), methods.end(),
-                                               [=](const clang::ObjCMethodDecl* methodDecl) -> bool {
-                                                 return methodDecl->getSelector().getAsString() == selectorName;
-                                               });
-
-    if (itInMainInterfaceDecl != methods.end()) {
-      return *itInMainInterfaceDecl;
-    }
-
-    // Search on the known categories
     const auto categories = propertyInterfaceDecl->known_categories();
-
-    // TODO: refactor this for to reuse the code above (use a list of begin/end pairs and do a find_if?
+    const auto protocols = propertyInterfaceDecl->protocols();
+    
+    auto pairs = std::vector<std::pair<decltype(methods.begin()), decltype(methods.end())>>{};
+    pairs.emplace_back(methods.begin(), methods.end());
+    
     for (const auto& category: categories) {
       const auto methods = category->instance_methods();
-
-      const auto itInCategoryDecl = std::find_if(methods.begin(), methods.end(),
-                                               [=](const clang::ObjCMethodDecl* methodDecl) -> bool {
-                                                 return methodDecl->getSelector().getAsString() == selectorName;
-                                               });
-      if (itInCategoryDecl != methods.end()) {
-        return *itInCategoryDecl ;
-      }
+      pairs.emplace_back(methods.begin(), methods.end());
     }
-
-    const auto protocols = propertyInterfaceDecl->protocols();
-
-    // TODO: refactor this for to reuse the code above (use a list of begin/end pairs and do a find_if?
+    
     for (const auto& protocol: protocols) {
       const auto methods = protocol->instance_methods();
+      pairs.emplace_back(methods.begin(), methods.end());
+    }
+    
+    for (const auto pairIt: pairs) {
+      const auto selectorIt = std::find_if(pairIt.first, pairIt.second,
+                                           [=](const clang::ObjCMethodDecl* methodDecl) -> bool {
+                                            return methodDecl->getSelector().getAsString() == selectorName;
+                                          });
 
-      const auto itInProtocolDecl = std::find_if(methods.begin(), methods.end(),
-                                               [=](const clang::ObjCMethodDecl* methodDecl) -> bool {
-                                                 return methodDecl->getSelector().getAsString() == selectorName;
-                                               });
-      if (itInProtocolDecl != methods.end()) {
-        return *itInProtocolDecl ;
+      if (selectorIt != pairIt.second) {
+        return *selectorIt;
       }
     }
-
+    
     return nullptr;
   }
 
@@ -193,9 +175,6 @@ namespace {
     
     assert(interfaceDecl != nullptr);
 
-    // TODO: find all the protocols the type implements.
-    // The interface type is just a "plus" for the property type
-    
     const auto propertyInterfaceDecl = [=]() -> clang::ObjCInterfaceDecl* {
       const auto t = llvm::dyn_cast<clang::ObjCObjectPointerType>(o->getTypeSourceInfo()->getType().getTypePtrOrNull());
       
@@ -350,8 +329,6 @@ namespace {
     llvm::outs() << "generated implementation: " << formattedImplementation << '\n';
 
     llvm::outs() << "known interfaces: " << knownDeclarations.interfaces.size() << '\n';
-    llvm::outs() << "known protocols: " << knownDeclarations.protocols.size() << '\n';
-    llvm::outs() << "known categories: " << knownDeclarations.categories.size() << '\n';
   }
 }
 
@@ -377,8 +354,8 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
 
   auto VisitObjCInterfaceDecl(clang::ObjCInterfaceDecl* o) -> bool
   {
-    llvm::outs() << "New interface: " << o->getName() << '\n';
-    o->getLocation().print(llvm::outs(), _context.compilerInstance->getSourceManager());
+    //llvm::outs() << "New interface: " << o->getName() << '\n';
+    //o->getLocation().print(llvm::outs(), _context.compilerInstance->getSourceManager());
     
     visit([](clang::ObjCInterfaceDecl* o) {
       return true;
@@ -390,7 +367,6 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
   
   auto VisitObjCProtocolDecl(clang::ObjCProtocolDecl* o) -> bool
   {
-    _knownDeclarations.protocols[o->getName()] = o;
     return true;
   }
   
@@ -405,7 +381,6 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
   {
     const auto interface = o->getClassInterface();
     //llvm::outs() << "LALALA category decl: " << o->getName() << " for interface: " << interface->getName() << '\n';
-    _knownDeclarations.categories[interface->getName()].push_back(o);
     return true;
   }
  
