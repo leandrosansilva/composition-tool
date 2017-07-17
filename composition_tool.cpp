@@ -123,37 +123,66 @@ namespace {
     return nullptr;
   }
   
-  auto getSelectorForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef selectorName) -> clang::ObjCMethodDecl*
+  template<
+    typename Result,
+    typename Filter,
+    typename InterfaceExtractor,
+    typename CategoryExtractor, 
+    typename ProtocolExtractor>
+  auto getMemberForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl,
+                       Filter filter,
+                       InterfaceExtractor interfaceExtractor,
+                       CategoryExtractor categoryExtractor,
+                       ProtocolExtractor protocolExtractor) -> Result
   {
-    const auto methods = propertyInterfaceDecl->instance_methods();
     const auto categories = propertyInterfaceDecl->known_categories();
     const auto protocols = propertyInterfaceDecl->protocols();
     
-    auto pairs = std::vector<std::pair<decltype(methods.begin()), decltype(methods.end())>>{};
-    pairs.emplace_back(methods.begin(), methods.end());
+    const auto membersInInterface = interfaceExtractor(propertyInterfaceDecl);
+    
+    auto pairs = std::vector<std::pair<decltype(membersInInterface.begin()), decltype(membersInInterface.end())>>{};
+    pairs.emplace_back(membersInInterface.begin(), membersInInterface.end());
     
     for (const auto& category: categories) {
-      const auto methods = category->instance_methods();
-      pairs.emplace_back(methods.begin(), methods.end());
+      const auto membersInCategory = categoryExtractor(category);
+      pairs.emplace_back(membersInCategory.begin(), membersInCategory.end());
     }
     
     for (const auto& protocol: protocols) {
-      const auto methods = protocol->instance_methods();
-      pairs.emplace_back(methods.begin(), methods.end());
+      const auto membersInProtocol = protocolExtractor(protocol);
+      pairs.emplace_back(membersInProtocol.begin(), membersInProtocol.end());
     }
     
     for (const auto pairIt: pairs) {
-      const auto selectorIt = std::find_if(pairIt.first, pairIt.second,
-                                           [=](const clang::ObjCMethodDecl* methodDecl) -> bool {
-                                            return methodDecl->getSelector().getAsString() == selectorName;
-                                          });
+      const auto selectorIt = std::find_if(pairIt.first, pairIt.second, filter);
 
       if (selectorIt != pairIt.second) {
         return *selectorIt;
       }
     }
     
-    return nullptr;
+    return nullptr;   
+  }
+  
+  auto getSelectorForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef selectorName) -> clang::ObjCMethodDecl*
+  {
+    const auto filter = [=](const clang::ObjCMethodDecl* methodDecl) {
+      return methodDecl->getSelector().getAsString() == selectorName;
+    };
+    
+    const auto interfaceExtractor = [](clang::ObjCInterfaceDecl* propertyInterfaceDecl) {
+      return propertyInterfaceDecl->instance_methods();
+    };
+    
+    const auto categoryExtractor = [](clang::ObjCCategoryDecl* category) {
+      return category->instance_methods();
+    };
+    
+    const auto protocolExtractor = [](clang::ObjCProtocolDecl* protocol) {
+      return protocol->instance_methods();
+    };
+    
+    return getMemberForInterface<clang::ObjCMethodDecl*>(propertyInterfaceDecl, filter, interfaceExtractor, categoryExtractor, protocolExtractor);
   }
 
   auto generateExtension(clang::ObjCPropertyDecl* o,
