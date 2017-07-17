@@ -127,6 +127,53 @@ namespace {
     return nullptr;
   }
 
+  auto getSelectorForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef selectorName) -> clang::ObjCMethodDecl*
+  {
+    const auto methods = propertyInterfaceDecl->instance_methods();
+
+    const auto itInMainInterfaceDecl = std::find_if(methods.begin(), methods.end(),
+                                               [=](const clang::ObjCMethodDecl* methodDecl) -> bool {
+                                                 return methodDecl->getSelector().getAsString() == selectorName;
+                                               });
+
+    if (itInMainInterfaceDecl != methods.end()) {
+      return *itInMainInterfaceDecl;
+    }
+
+    // Search on the known categories
+    const auto categories = propertyInterfaceDecl->known_categories();
+
+    // TODO: refactor this for to reuse the code above (use a list of begin/end pairs and do a find_if?
+    for (const auto& category: categories) {
+      const auto methods = category->instance_methods();
+
+      const auto itInCategoryDecl = std::find_if(methods.begin(), methods.end(),
+                                               [=](const clang::ObjCMethodDecl* methodDecl) -> bool {
+                                                 return methodDecl->getSelector().getAsString() == selectorName;
+                                               });
+      if (itInCategoryDecl != methods.end()) {
+        return *itInCategoryDecl ;
+      }
+    }
+
+    const auto protocols = propertyInterfaceDecl->protocols();
+
+    // TODO: refactor this for to reuse the code above (use a list of begin/end pairs and do a find_if?
+    for (const auto& protocol: protocols) {
+      const auto methods = protocol->instance_methods();
+
+      const auto itInProtocolDecl = std::find_if(methods.begin(), methods.end(),
+                                               [=](const clang::ObjCMethodDecl* methodDecl) -> bool {
+                                                 return methodDecl->getSelector().getAsString() == selectorName;
+                                               });
+      if (itInProtocolDecl != methods.end()) {
+        return *itInProtocolDecl ;
+      }
+    }
+
+    return nullptr;
+  }
+
   auto generateExtension(clang::ObjCPropertyDecl* o,
                          CodeGeneratorContext& context,
                          const std::vector<clang::AnnotateAttr*>& attrs,
@@ -186,12 +233,6 @@ namespace {
       //o->dump();
     }
     
-    const auto methods = propertyInterfaceDecl->instance_methods();
-    
-    const auto categories = knownDeclarations.categories.find(propertyInterfaceDecl->getName());
-    
-    assert(categories != std::end(knownDeclarations.categories));
-    
     auto providedBodyForHeader = std::string{};
     auto providedBodyForImplementation = std::string{};
     
@@ -201,34 +242,8 @@ namespace {
       // instance methods (FIXME: will fail with wildcard -*)
       if (item.startswith("-")) {
         const auto selectorName = item.substr(1);
-        
-        const auto selectorInProperty = [&]() -> clang::ObjCMethodDecl* {
-          const auto itInMainInterfaceDecl = std::find_if(methods.begin(), methods.end(),
-                                                     [=](const clang::ObjCMethodDecl* methodDecl) -> bool {
-                                                       return methodDecl->getSelector().getAsString() == selectorName;
-                                                     });
-          
-          if (itInMainInterfaceDecl != methods.end()) {
-            return *itInMainInterfaceDecl;
-          }
-          
-          // Search on the known categories
-          
-          // TODO: refactor this for to reuse the code above (use a list of begin/end pairs and do a find_if?
-          for (const auto& category: categories->second) {
-            const auto methods = category->instance_methods();
-            
-            const auto itInCategoryDecl = std::find_if(methods.begin(), methods.end(),
-                                                     [=](const clang::ObjCMethodDecl* methodDecl) -> bool {
-                                                       return methodDecl->getSelector().getAsString() == selectorName;
-                                                     });
-            if (itInCategoryDecl != methods.end()) {
-              return *itInCategoryDecl ;
-            }
-          }
-          
-          return nullptr;
-        }();   
+
+        const auto selectorInProperty = getSelectorForInterface(propertyInterfaceDecl, selectorName);
         
         assert(selectorInProperty != nullptr);
 
@@ -287,28 +302,33 @@ namespace {
       
       //if (item.startswith("@")) {
       //  const auto propertyName = item.substr(1);
-      //  
+
+      //  const auto propertyDecl = [&]() -> clang::ObjCPropertyDecl* {
+      //    const auto properties = propertyInterfaceDecl->properties();
+
+      //  }();
+
       //  const auto propertyIt = std::find_if(std::begin(properties->second),
       //                                               std::end(properties->second),
       //                                               [=](const clang::ObjCPropertyDecl* propertyDecl) -> bool {
       //                                                 return propertyDecl->getName() == propertyName;
       //                                               });
-      //
+
       //  assert(propertyIt != std::end(properties->second));
-      //  
+
       //  const auto propertyDecl = *propertyIt;
-      //  
+
       //  assert(propertyDecl != nullptr);
-      //  
+
       //  const auto locStart = propertyDecl->getLocStart();
       //  const auto locEnd = propertyDecl->getLocEnd();
-      //  
+
       //  const auto codeBegin = context.compilerInstance->getSourceManager().getCharacterData(locStart);
       //  const auto codeEnd = context.compilerInstance->getSourceManager().getCharacterData(locEnd);
       //  const auto c = llvm::StringRef(codeBegin, codeEnd - codeBegin);
-      //  
+
       //  llvm::outs() << "Property code: " << c << '\n';
-      //  
+
       //  const auto getterMethodDecl = propertyDecl->getGetterMethodDecl();
       //  const auto setterMethodDecl = propertyDecl->getSetterMethodDecl();
       //}
