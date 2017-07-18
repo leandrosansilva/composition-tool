@@ -166,30 +166,60 @@ namespace {
     return nullptr;   
   }
   
-  auto getInstanceSelectorForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef selectorName) -> clang::ObjCMethodDecl*
+  template<typename Extractor>
+  auto getSelectorForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef selectorName, Extractor extractor) -> clang::ObjCMethodDecl*
   {
     const auto filter = [=](const clang::ObjCMethodDecl* methodDecl) {
       return methodDecl->getSelector().getAsString() == selectorName;
     };
     
+    return getMemberForInterface<clang::ObjCMethodDecl*>(propertyInterfaceDecl, filter, extractor, extractor, extractor);
+  }
+  
+  auto getInstanceSelectorForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef selectorName) -> clang::ObjCMethodDecl*
+  {
     const auto extractor = [](clang::ObjCContainerDecl* container) {
       return container->instance_methods();
     };
     
-    return getMemberForInterface<clang::ObjCMethodDecl*>(propertyInterfaceDecl, filter, extractor, extractor, extractor);
+    return getSelectorForInterface(propertyInterfaceDecl, selectorName, extractor);
   }
   
-  auto getInstancePropertyForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef propertyName) -> clang::ObjCPropertyDecl*
+  auto getClassSelectorForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef selectorName) -> clang::ObjCMethodDecl*
+  {
+    const auto extractor = [](clang::ObjCContainerDecl* container) {
+      return container->class_methods();
+    };
+    
+    return getSelectorForInterface(propertyInterfaceDecl, selectorName, extractor);
+  }
+  
+  template<typename Extractor>
+  auto getPropertyForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef propertyName, Extractor extractor) -> clang::ObjCPropertyDecl*
   {
     const auto filter = [=](const clang::ObjCPropertyDecl* propertyDecl) {
       return propertyDecl->getName() == propertyName;
     };
     
+    return getMemberForInterface<clang::ObjCPropertyDecl*>(propertyInterfaceDecl, filter, extractor, extractor, extractor);
+  }
+  
+  auto getInstancePropertyForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef propertyName) -> clang::ObjCPropertyDecl*
+  {
     const auto extractor = [](clang::ObjCContainerDecl* container) {
       return container->instance_properties();
     };
     
-    return getMemberForInterface<clang::ObjCPropertyDecl*>(propertyInterfaceDecl, filter, extractor, extractor, extractor);
+    return getPropertyForInterface(propertyInterfaceDecl, propertyName, extractor);
+  }
+  
+  auto getClassPropertyForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef propertyName) -> clang::ObjCPropertyDecl*
+  {
+    const auto extractor = [](clang::ObjCContainerDecl* container) {
+      return container->class_properties();
+    };
+    
+    return getPropertyForInterface(propertyInterfaceDecl, propertyName, extractor);
   }
 
   auto generateExtension(clang::ObjCPropertyDecl* o,
