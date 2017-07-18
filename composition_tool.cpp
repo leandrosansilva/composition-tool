@@ -136,10 +136,13 @@ namespace {
                        ProtocolExtractor protocolExtractor) -> Result
   {
     const auto categories = propertyInterfaceDecl->known_categories();
+    
+    // TODO: check the other protocols linked in the interface (no only ::protocols())
     const auto protocols = propertyInterfaceDecl->protocols();
     
     const auto membersInInterface = interfaceExtractor(propertyInterfaceDecl);
     
+    // FIXME: there's no need for building the list of pairs!
     auto pairs = std::vector<std::pair<decltype(membersInInterface.begin()), decltype(membersInInterface.end())>>{};
     pairs.emplace_back(membersInInterface.begin(), membersInInterface.end());
     
@@ -148,6 +151,7 @@ namespace {
       pairs.emplace_back(membersInCategory.begin(), membersInCategory.end());
     }
     
+    // TODO: go up in the protocol hierarchy until find the member or skip
     for (const auto& protocol: protocols) {
       const auto membersInProtocol = protocolExtractor(protocol);
       pairs.emplace_back(membersInProtocol.begin(), membersInProtocol.end());
