@@ -28,7 +28,7 @@ typedef struct SomeStruct
 
 - (SomeStruct)buildSomeStruct:(int)flag;
 
-@property (readonly) NSNumber* length;
+@property (readwrite) NSNumber* length;
 
 @end
 

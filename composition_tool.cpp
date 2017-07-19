@@ -225,6 +225,57 @@ namespace {
     
     return getPropertyForInterface(propertyInterfaceDecl, propertyName, extractor);
   }
+  
+  auto generateCallBody(clang::ObjCMethodDecl* selectorInProperty) -> std::string
+  {
+     const auto selectorNameAsStdString = selectorInProperty->getSelector().getAsString();
+          
+     if (selectorInProperty->getSelector().getNumArgs() == 0) {
+       return selectorNameAsStdString;
+     }
+     
+     // yep, it's a view of the std::string version. Not so fancy, but works
+     const auto selectorName = llvm::StringRef{selectorNameAsStdString};
+     
+     const auto parameters = selectorInProperty->parameters();
+
+     auto paramLabels = llvm::SmallVector<llvm::StringRef, 10>{};
+     selectorName.split(paramLabels, ":", -1, false);
+
+     // TODO: use stream instead
+     auto callBody = std::string{};
+
+     // FIXME: it fails for methods with no arguments!
+     assert(paramLabels.size() == parameters.size());
+
+     for (size_t size = parameters.size(), i = 0u; i < size; i++) {
+       callBody += paramLabels[i];
+       callBody += ":";
+       callBody += parameters[i]->getName();
+       if (i < size - 1) {
+         callBody += " ";
+       }
+       llvm::outs() << paramLabels[i] << ":" << parameters[i]->getName() << " " << "\n";
+     }
+
+     return callBody;
+  }
+  
+  auto generateSelectorDefinition(clang::ObjCMethodDecl* selectorInProperty, const llvm::StringRef propertyName,
+                                  const std::string& selectorSignature) -> std::string
+  {
+    return llvm::formatv(objCSelectorImplementationFormat,
+                         selectorSignature,
+                         "self.",
+                         propertyName,
+                         generateCallBody(selectorInProperty));
+  }
+  
+  auto generateSelectorSignature(clang::ObjCMethodDecl* selector) -> std::string
+  {
+    // TODO: implement
+    return "<signature>";
+  }
 
   auto generateExtension(clang::ObjCPropertyDecl* o,
                          CodeGeneratorContext& context,
@@ -251,8 +302,6 @@ namespace {
       assert(t != nullptr);
       
       t->dump();
-      
-      llvm::outs() << "lalala" << '\n';
       
       const auto pointee = t->getPointeeType();
       
@@ -306,81 +355,39 @@ namespace {
         providedBodyForHeader += c;
         providedBodyForHeader += ";\n";
 
-        llvm::outs() << "before params\n";
-
-        const auto& parameters = selectorInProperty->parameters();
-
-        const auto callBody = [&]() -> std::string {
-          if (parameters.size() == 0) {
-            return selectorName;
-          }
-
-          auto paramLabels = llvm::SmallVector<llvm::StringRef, 10>{};
-          selectorName.split(paramLabels, ":", -1, false);
-
-          auto callBody = std::string{};
-
-          // FIXME: it fails for methods with no arguments!
-          assert(paramLabels.size() == parameters.size());
-
-          for (size_t size = parameters.size(), i = 0u; i < size; i++) {
-            callBody += paramLabels[i];
-            callBody += ":";
-            callBody += parameters[i]->getName();
-            if (i < size - 1) {
-              callBody += " ";
-            }
-            llvm::outs() << paramLabels[i] << ":" << parameters[i]->getName() << " " << "\n";
-          }
-
-          return callBody;
-        }();
-
-        const auto selectorDefinition = llvm::formatv(objCSelectorImplementationFormat,
-                                                      c,
-                                                      "self.",
-                                                      o->getName(),
-                                                      callBody);
-
-        providedBodyForImplementation += selectorDefinition;
-
-        llvm::outs() << "body: " << selectorDefinition << '\n';
-
-        llvm::outs() << "after params\n";
+        providedBodyForImplementation += generateSelectorDefinition(selectorInProperty, o->getName(), c);
       }
       
-      //if (item.startswith("@")) {
-      //  const auto propertyName = item.substr(1);
+      if (item.startswith("@")) {
+        const auto propertyName = item.substr(1);
 
-      //  const auto propertyDecl = [&]() -> clang::ObjCPropertyDecl* {
-      //    const auto properties = propertyInterfaceDecl->properties();
+        const auto propertyDecl = [&] {
+          if (const auto instanceProperty = getInstancePropertyForInterface(propertyInterfaceDecl, propertyName)) {
+            return instanceProperty;
+          }
+          
+          return getClassPropertyForInterface(propertyInterfaceDecl, propertyName); 
+        }();
 
-      //  }();
+        const auto locStart = propertyDecl->getLocStart();
+        const auto locEnd = propertyDecl->getLocEnd();
 
-      //  const auto propertyIt = std::find_if(std::begin(properties->second),
-      //                                               std::end(properties->second),
-      //                                               [=](const clang::ObjCPropertyDecl* propertyDecl) -> bool {
-      //                                                 return propertyDecl->getName() == propertyName;
-      //                                               });
+        const auto codeBegin = context.compilerInstance->getSourceManager().getCharacterData(locStart);
+        const auto codeEnd = context.compilerInstance->getSourceManager().getCharacterData(locEnd);
+        const auto propertySignature = llvm::StringRef(codeBegin, codeEnd - codeBegin);
 
-      //  assert(propertyIt != std::end(properties->second));
+        llvm::outs() << "Property signature: " << propertySignature << '\n';
 
-      //  const auto propertyDecl = *propertyIt;
-
-      //  assert(propertyDecl != nullptr);
-
-      //  const auto locStart = propertyDecl->getLocStart();
-      //  const auto locEnd = propertyDecl->getLocEnd();
-
-      //  const auto codeBegin = context.compilerInstance->getSourceManager().getCharacterData(locStart);
-      //  const auto codeEnd = context.compilerInstance->getSourceManager().getCharacterData(locEnd);
-      //  const auto c = llvm::StringRef(codeBegin, codeEnd - codeBegin);
-
-      //  llvm::outs() << "Property code: " << c << '\n';
-
-      //  const auto getterMethodDecl = propertyDecl->getGetterMethodDecl();
-      //  const auto setterMethodDecl = propertyDecl->getSetterMethodDecl();
-      //}
+        if (auto getterMethodDecl = propertyDecl->getGetterMethodDecl()) {
+          const auto selectorSignature = generateSelectorSignature(getterMethodDecl);
+          providedBodyForImplementation += generateSelectorDefinition(getterMethodDecl, o->getName(), selectorSignature);
+        }
+        
+        if (auto setterMethodDecl = propertyDecl->getSetterMethodDecl()) {
+          const auto selectorSignature = generateSelectorSignature(setterMethodDecl);
+          providedBodyForImplementation += generateSelectorDefinition(setterMethodDecl, o->getName(), selectorSignature);
+        }
+      }
     }
     
     const auto formattedHeader = llvm::formatv(objCCategoryHeaderFormat,
