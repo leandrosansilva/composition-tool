@@ -49,6 +49,8 @@ namespace {
 }
 )+-+";
 
+  const auto objCSelectorSignatureFormat = R"+=+({0} ({1}){2})+=+";
+
   struct CodeGeneratorContext
   {
     clang::CompilerInstance* compilerInstance;
@@ -273,8 +275,43 @@ namespace {
   
   auto generateSelectorSignature(clang::ObjCMethodDecl* selector) -> std::string
   {
-    // TODO: implement
-    return "<signature>";
+    const auto returnType = selector->getReturnType();
+    
+    const auto signatureCore = [&]() -> std::string {
+      const auto parameters = selector->parameters();
+      
+      const auto selectorNameAsStdString = selector->getSelector().getAsString();
+      
+      llvm::outs() << "analysing selector " << selector->getSelector().getAsString() << '\n';
+      
+      if (parameters.empty()) {
+        return selectorNameAsStdString;
+      }
+      
+      const auto selectorName = llvm::StringRef{selectorNameAsStdString.data(), selectorNameAsStdString.size()};
+      
+      auto paramLabels = llvm::SmallVector<llvm::StringRef, 10>{};
+      selectorName.split(paramLabels, ":", -1, false);
+
+      // FIXME: this is copy&paste code
+      
+      // TODO: use stream instead
+      auto callBody = std::string{};
+
+      // FIXME: it fails for methods with no arguments!
+      assert(paramLabels.size() == parameters.size());
+
+      for (size_t size = parameters.size(), i = 0u; i < size; i++) {
+        callBody += llvm::formatv("{0}:({1}){2}", paramLabels[i], parameters[i]->getType().getAsString(), parameters[i]->getName());
+        //callBody += llvm::formatv("{0}:({1}{2}) ", "a", "b", "c");
+      }
+      
+      return callBody;
+    }();
+    
+    const auto methodType = selector->isClassMethod() ? "+" : "-";
+    
+    return llvm::formatv(objCSelectorSignatureFormat, methodType, returnType.getAsString(), signatureCore);
   }
 
   auto generateExtension(clang::ObjCPropertyDecl* o,
