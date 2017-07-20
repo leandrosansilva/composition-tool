@@ -396,6 +396,7 @@ namespace {
         providedBodyForImplementation += generateSelectorDefinition(selectorInProperty, o->getName(), c);
       }
       
+      // FIXME: will fail with wildcards
       if (item.startswith("@")) {
         const auto propertyName = item.substr(1);
 
@@ -415,6 +416,10 @@ namespace {
         const auto propertySignature = llvm::StringRef(codeBegin, codeEnd - codeBegin);
 
         llvm::outs() << "Property signature: " << propertySignature << '\n';
+        
+        providedBodyForHeader += propertySignature;
+        providedBodyForHeader += propertyDecl->getName();
+        providedBodyForHeader += ";\n";
 
         if (auto getterMethodDecl = propertyDecl->getGetterMethodDecl()) {
           const auto selectorSignature = generateSelectorSignature(getterMethodDecl);
