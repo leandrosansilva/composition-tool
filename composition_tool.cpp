@@ -280,6 +280,7 @@ namespace {
     const auto signatureCore = [&]() -> std::string {
       const auto parameters = selector->parameters();
       
+      // FIXME: this is copy@paste
       const auto selectorNameAsStdString = selector->getSelector().getAsString();
       
       llvm::outs() << "analysing selector " << selector->getSelector().getAsString() << '\n';
@@ -303,7 +304,6 @@ namespace {
 
       for (size_t size = parameters.size(), i = 0u; i < size; i++) {
         callBody += llvm::formatv("{0}:({1}){2}", paramLabels[i], parameters[i]->getType().getAsString(), parameters[i]->getName());
-        //callBody += llvm::formatv("{0}:({1}{2}) ", "a", "b", "c");
       }
       
       return callBody;
@@ -314,6 +314,7 @@ namespace {
     return llvm::formatv(objCSelectorSignatureFormat, methodType, returnType.getAsString(), signatureCore);
   }
 
+  // FIXME: no needs to say this function is way too large, doing too much and with a lot of copy&paste, right?
   auto generateExtension(clang::ObjCPropertyDecl* o,
                          CodeGeneratorContext& context,
                          const std::vector<clang::AnnotateAttr*>& attrs,
