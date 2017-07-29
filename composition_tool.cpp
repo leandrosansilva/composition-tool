@@ -372,11 +372,21 @@ namespace {
     context.implStream << generateSelectorDefinition(selectorInProperty, selectorSignature, memberDef);
   }
   
-  auto generatePropertyCode(CodeGeneratorContext& context, clang::ObjCInterfaceDecl* propertyInterfaceDecl, clang::ObjCPropertyDecl* propertyDecl, ProvidedItem item) -> void
+  auto generatePropertyCode(CodeGeneratorContext& context, clang::ObjCInterfaceDecl* propertyInterfaceDecl, clang::ObjCPropertyDecl*, ProvidedItem item) -> void
   {
-    const auto locStart = propertyDecl->getLocStart();
+    const auto propertyName = item.value;
+    
+    const auto propertyDeclInMember = [&] {
+      if (const auto instanceProperty = getInstancePropertyForInterface(propertyInterfaceDecl, propertyName)) {
+        return instanceProperty;
+      }
+
+      return getClassPropertyForInterface(propertyInterfaceDecl, propertyName);
+    }();
+    
+    const auto locStart = propertyDeclInMember->getLocStart();
     // FIXME: locEnd is pointing to the beginning of the property name :-(
-    const auto locEnd = propertyDecl->getLocEnd();
+    const auto locEnd = propertyDeclInMember->getLocEnd();
 
     const auto codeBegin = context.compilerInstance->getSourceManager().getCharacterData(locStart);
     const auto codeEnd = context.compilerInstance->getSourceManager().getCharacterData(locEnd);
@@ -385,28 +395,28 @@ namespace {
     llvm::outs() << "Property signature: " << propertySignature << '\n';
     
     context.headerStream << propertySignature;
-    context.headerStream << propertyDecl->getName() << ";\n\n";
-    
+    context.headerStream << propertyDeclInMember->getName() << ";\n\n";
+  
     const auto f = [&]() -> std::string {
-      if (propertyDecl->isInstanceProperty()) {
-        return llvm::formatv(objcInstanceSelectorForwardingFormat, propertyDecl->getName());
+      if (propertyDeclInMember->isInstanceProperty()) {
+        return llvm::formatv(objcInstanceSelectorForwardingFormat, propertyDeclInMember->getName());
       }
       
       return llvm::formatv(objcClassSelectorForwardingFormat, propertyInterfaceDecl->getName());
     }();
 
-    if (auto getterMethodDecl = propertyDecl->getGetterMethodDecl()) {
+    if (auto getterMethodDecl = propertyDeclInMember->getGetterMethodDecl()) {
       const auto selectorSignature = generateSelectorSignature(getterMethodDecl);
       context.implStream << generateSelectorDefinition(getterMethodDecl, selectorSignature, f);
     }
     
-    if (auto setterMethodDecl = propertyDecl->getSetterMethodDecl()) {
+    if (auto setterMethodDecl = propertyDeclInMember->getSetterMethodDecl()) {
       const auto selectorSignature = generateSelectorSignature(setterMethodDecl);
       context.implStream << generateSelectorDefinition(setterMethodDecl, selectorSignature, f);
     }
   }
   
-  using ProvidedItemGenerator = void(*)(CodeGeneratorContext&, clang::ObjCInterfaceDecl*, clang::ObjCPropertyDecl*, ProvidedItem);
+  using ProvidedItemGenerator = std::add_pointer<void(CodeGeneratorContext&, clang::ObjCInterfaceDecl*, clang::ObjCPropertyDecl*, ProvidedItem)>::type;
   
   std::map<ProvidedItemType, ProvidedItemGenerator> generators {
     {ProvidedItemType::InstanceMethod, generateInstanceMethodCode},
