@@ -29,9 +29,9 @@
 namespace {
   const llvm::StringRef PROVIDE_TAG("__provide__");
 
-  const auto objCCategoryHeaderFormatBegin = "@interface {0} ({1}__{2})\n";
+  const auto objCCategoryHeaderFormatBegin = "@interface {0} ({1}__{2})\n\n";
   
-  const auto objCCategoryImplementationFormatBegin = "@implementation {0} ({1}__{2})\n";
+  const auto objCCategoryImplementationFormatBegin = "@implementation {0} ({1}__{2})\n\n";
   
   const auto objcDeclarationEnd = "@end\n\n";
 
@@ -50,6 +50,8 @@ namespace {
   {
     clang::CompilerInstance* compilerInstance;
     llvm::StringRef inputFilename;
+    llvm::raw_ostream& headerStream;
+    llvm::raw_ostream& implStream;
   };
 
   struct KnownDeclarations
@@ -348,66 +350,75 @@ namespace {
     return llvm::formatv(objCSelectorSignatureFormat, methodType, returnType.getAsString(), signatureCore);
   }
   
-  std::map<ProvidedItemType, std::function<void(CodeGeneratorContext&, clang::ObjCInterfaceDecl*, clang::ObjCPropertyDecl*, ProvidedItem, llvm::raw_ostream&, llvm::raw_ostream&)>> generators {
-    {ProvidedItemType::InstanceMethod, [](CodeGeneratorContext&, clang::ObjCInterfaceDecl* propertyInterfaceDecl, clang::ObjCPropertyDecl* propertyDecl, ProvidedItem item, llvm::raw_ostream& headerStream, llvm::raw_ostream& implStream) {
-      const auto selectorName = item.value;
-      const auto selectorInProperty = getInstanceSelectorForInterface(propertyInterfaceDecl, selectorName);
-      assert(selectorInProperty != nullptr);
-      const auto selectorSignature = generateSelectorSignature(selectorInProperty);
-      headerStream << selectorSignature << ";\n";
-      const auto memberDef = llvm::formatv(objcInstanceSelectorForwardingFormat, propertyDecl->getName());
-      implStream << generateSelectorDefinition(selectorInProperty, selectorSignature, memberDef);
-    }},
-    {ProvidedItemType::ClassMethod, [](CodeGeneratorContext&, clang::ObjCInterfaceDecl* propertyInterfaceDecl, clang::ObjCPropertyDecl*, ProvidedItem item, llvm::raw_ostream& headerStream, llvm::raw_ostream& implStream) {
-      const auto selectorName = item.value;
-      const auto selectorInProperty = getClassSelectorForInterface(propertyInterfaceDecl, selectorName);
-      assert(selectorInProperty != nullptr);
-      const auto selectorSignature = generateSelectorSignature(selectorInProperty);
-      headerStream << selectorSignature << ";\n";
-      const auto memberDef = llvm::formatv(objcClassSelectorForwardingFormat, propertyInterfaceDecl->getName());
-      implStream << generateSelectorDefinition(selectorInProperty, selectorSignature, memberDef);
-    }},
-    {ProvidedItemType::Property, [](CodeGeneratorContext& context, clang::ObjCInterfaceDecl* propertyInterfaceDecl, clang::ObjCPropertyDecl* propertyDecl, ProvidedItem item, llvm::raw_ostream& headerStream, llvm::raw_ostream& implStream) {
-      const auto locStart = propertyDecl->getLocStart();
-      // FIXME: locEnd is pointing to the beginning of the property name :-(
-      const auto locEnd = propertyDecl->getLocEnd();
+  auto generateInstanceMethodCode(CodeGeneratorContext& context, clang::ObjCInterfaceDecl* propertyInterfaceDecl, clang::ObjCPropertyDecl* propertyDecl, ProvidedItem item) -> void
+  {
+    const auto selectorName = item.value;
+    const auto selectorInProperty = getInstanceSelectorForInterface(propertyInterfaceDecl, selectorName);
+    assert(selectorInProperty != nullptr);
+    const auto selectorSignature = generateSelectorSignature(selectorInProperty);
+    context.headerStream << selectorSignature << ";\n\n";
+    const auto memberDef = llvm::formatv(objcInstanceSelectorForwardingFormat, propertyDecl->getName());
+    context.implStream << generateSelectorDefinition(selectorInProperty, selectorSignature, memberDef);
+  }
+  
+  auto generateClassMethodCode(CodeGeneratorContext& context, clang::ObjCInterfaceDecl* propertyInterfaceDecl, clang::ObjCPropertyDecl*, ProvidedItem item) -> void
+  {
+    const auto selectorName = item.value;
+    const auto selectorInProperty = getClassSelectorForInterface(propertyInterfaceDecl, selectorName);
+    assert(selectorInProperty != nullptr);
+    const auto selectorSignature = generateSelectorSignature(selectorInProperty);
+    context.headerStream << selectorSignature << ";\n\n";
+    const auto memberDef = llvm::formatv(objcClassSelectorForwardingFormat, propertyInterfaceDecl->getName());
+    context.implStream << generateSelectorDefinition(selectorInProperty, selectorSignature, memberDef);
+  }
+  
+  auto generatePropertyCode(CodeGeneratorContext& context, clang::ObjCInterfaceDecl* propertyInterfaceDecl, clang::ObjCPropertyDecl* propertyDecl, ProvidedItem item) -> void
+  {
+    const auto locStart = propertyDecl->getLocStart();
+    // FIXME: locEnd is pointing to the beginning of the property name :-(
+    const auto locEnd = propertyDecl->getLocEnd();
 
-      const auto codeBegin = context.compilerInstance->getSourceManager().getCharacterData(locStart);
-      const auto codeEnd = context.compilerInstance->getSourceManager().getCharacterData(locEnd);
-      const auto propertySignature = llvm::StringRef(codeBegin, codeEnd - codeBegin);
+    const auto codeBegin = context.compilerInstance->getSourceManager().getCharacterData(locStart);
+    const auto codeEnd = context.compilerInstance->getSourceManager().getCharacterData(locEnd);
+    const auto propertySignature = llvm::StringRef(codeBegin, codeEnd - codeBegin);
 
-      llvm::outs() << "Property signature: " << propertySignature << '\n';
-      
-      headerStream << propertySignature;
-      headerStream << propertyDecl->getName() << ";\n";
-      
-      const auto f = [&]() -> std::string {
-        if (propertyDecl->isInstanceProperty()) {
-          return llvm::formatv(objcInstanceSelectorForwardingFormat, propertyDecl->getName());
-        }
-        
-        return llvm::formatv(objcClassSelectorForwardingFormat, propertyInterfaceDecl->getName());
-      }();
-
-      if (auto getterMethodDecl = propertyDecl->getGetterMethodDecl()) {
-        const auto selectorSignature = generateSelectorSignature(getterMethodDecl);
-        implStream << generateSelectorDefinition(getterMethodDecl, selectorSignature, f);
+    llvm::outs() << "Property signature: " << propertySignature << '\n';
+    
+    context.headerStream << propertySignature;
+    context.headerStream << propertyDecl->getName() << ";\n\n";
+    
+    const auto f = [&]() -> std::string {
+      if (propertyDecl->isInstanceProperty()) {
+        return llvm::formatv(objcInstanceSelectorForwardingFormat, propertyDecl->getName());
       }
       
-      if (auto setterMethodDecl = propertyDecl->getSetterMethodDecl()) {
-        const auto selectorSignature = generateSelectorSignature(setterMethodDecl);
-        implStream << generateSelectorDefinition(setterMethodDecl, selectorSignature, f);
-      }
-    }},
+      return llvm::formatv(objcClassSelectorForwardingFormat, propertyInterfaceDecl->getName());
+    }();
+
+    if (auto getterMethodDecl = propertyDecl->getGetterMethodDecl()) {
+      const auto selectorSignature = generateSelectorSignature(getterMethodDecl);
+      context.implStream << generateSelectorDefinition(getterMethodDecl, selectorSignature, f);
+    }
+    
+    if (auto setterMethodDecl = propertyDecl->getSetterMethodDecl()) {
+      const auto selectorSignature = generateSelectorSignature(setterMethodDecl);
+      context.implStream << generateSelectorDefinition(setterMethodDecl, selectorSignature, f);
+    }
+  }
+  
+  using ProvidedItemGenerator = void(*)(CodeGeneratorContext&, clang::ObjCInterfaceDecl*, clang::ObjCPropertyDecl*, ProvidedItem);
+  
+  std::map<ProvidedItemType, ProvidedItemGenerator> generators {
+    {ProvidedItemType::InstanceMethod, generateInstanceMethodCode},
+    {ProvidedItemType::ClassMethod, generateClassMethodCode},
+    {ProvidedItemType::Property, generatePropertyCode},
   };
   
   // FIXME: no needs to say this function is way too large, doing too much and with a lot of copy&paste, right?
   auto generateExtension(clang::ObjCPropertyDecl* o,
                          CodeGeneratorContext& context,
                          const std::vector<clang::AnnotateAttr*>& attrs,
-                         const KnownDeclarations& knownDeclarations,
-                         llvm::raw_string_ostream& headerStream,
-                         llvm::raw_string_ostream& implStream) -> void
+                         const KnownDeclarations& knownDeclarations) -> void
   {
     const auto providedItems = extractProvidedItems(attrs);
 
@@ -458,27 +469,25 @@ namespace {
       //o->dump();
     }
     
-    headerStream << llvm::formatv(objCCategoryHeaderFormatBegin,
+    context.headerStream << llvm::formatv(objCCategoryHeaderFormatBegin,
                                               interfaceDecl->getName(),
                                               propertyInterfaceDecl->getName(),
                                               o->getName());
     
-    implStream << llvm::formatv(objCCategoryImplementationFormatBegin,
+    context.implStream << llvm::formatv(objCCategoryImplementationFormatBegin,
                                                       interfaceDecl->getName(),
                                                       propertyInterfaceDecl->getName(),
                                                       o->getName());
     
     for (const auto item: providedItems) {
       assert(item.type != ProvidedItemType::Unknown && "FIXME: handle error");
-      
       const auto generator = generators[item.type];
-      
       llvm::outs() << "Processing item: " << item.value << '\n';
-      generator(context, propertyInterfaceDecl, o, item, headerStream, implStream);
+      generator(context, propertyInterfaceDecl, o, item);
     }
     
-    headerStream << objcDeclarationEnd;
-    implStream << objcDeclarationEnd;
+    context.headerStream << objcDeclarationEnd;
+    context.implStream << objcDeclarationEnd;
   }
 }
 
@@ -586,18 +595,8 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
         return true;
       }
       
-      auto providedBodyForHeader = std::string{};
-      auto providedBodyForImplementation = std::string{};
+      generateExtension(o, _context, provideAnnotationAttrs, _knownDeclarations);
       
-      {
-        llvm::raw_string_ostream headerStream{providedBodyForHeader};
-        llvm::raw_string_ostream implStream{providedBodyForImplementation};
-        generateExtension(o, _context, provideAnnotationAttrs, _knownDeclarations, headerStream, implStream);
-      }
-      
-      llvm::outs() << "Header: \n" << providedBodyForHeader;
-      llvm::outs() << "Implementation: \n" << providedBodyForImplementation;
-
       return true;
     }, o);
   }
@@ -627,14 +626,31 @@ struct ObjCASTConsumer : public clang::ASTConsumer
 // For each source file provided to the tool, a new FrontendAction is created.
 struct MyFrontendAction : public clang::ASTFrontendAction
 {
-  MyFrontendAction()
+  std::string _headerContent;
+  std::string _implContent;
+  
+  llvm::raw_string_ostream _headerStream;
+  llvm::raw_string_ostream _implStream;
+  
+  MyFrontendAction():
+    _headerStream(_headerContent),
+    _implStream(_implContent)
   {
+  }
+  
+  virtual ~MyFrontendAction()
+  {
+    _headerStream.flush();
+    _implStream.flush();
+    
+    llvm::outs() << "Header: \n" << _headerContent;
+    llvm::outs() << "Implementation: \n" << _implContent;
   }
   
   auto CreateASTConsumer(clang::CompilerInstance &compilerInstance,
                          llvm::StringRef file) -> std::unique_ptr<clang::ASTConsumer> final
   {
-    return llvm::make_unique<ObjCASTConsumer>(CodeGeneratorContext{&compilerInstance, file});
+    return llvm::make_unique<ObjCASTConsumer>(CodeGeneratorContext{&compilerInstance, file, _headerStream, _implStream});
   }
 };
 
