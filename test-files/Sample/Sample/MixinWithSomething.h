@@ -30,6 +30,8 @@ typedef struct SomeStruct
 
 @property (readwrite) NSNumber* length;
 
+@property (class) NSString* aClassProperty;
+
 @end
 
 @interface MixinWithSomething (SomeWeirdExtension)

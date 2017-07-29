@@ -31,23 +31,22 @@ namespace {
 
   const auto objCCategoryHeaderFormat = R"+-+(
 @interface {0} ({1}__{2})
-
 {3}
-
-@end
-)+-+";
+@end)+-+";
 
   const auto objCCategoryImplementationFormat = R"+-+(
 @implementation {0} ({1}__{2})
 {3}
-@end
-)+-+";
+@end)+-+";
 
   const auto objCSelectorImplementationFormat = R"+-+(
 {0} {
-  return [{1}{2} {3}];
+  return [{1} {2}];
 }
 )+-+";
+
+  const auto objcClassSelectorForwardingFormat = "{0}";
+  const auto objcInstanceSelectorForwardingFormat = "self.{0}";
 
   const auto objCSelectorSignatureFormat = R"+=+({0} ({1}){2})+=+";
 
@@ -263,13 +262,13 @@ namespace {
      return callBody;
   }
   
-  auto generateSelectorDefinition(clang::ObjCMethodDecl* selectorInProperty, const llvm::StringRef propertyName,
-                                  const std::string& selectorSignature) -> std::string
+  auto generateSelectorDefinition(clang::ObjCMethodDecl* selectorInProperty,
+                                  const std::string& selectorSignature,
+                                  const std::string& memberTODORenameMeForSomethingThatRefersToClassToo) -> std::string
   {
     return llvm::formatv(objCSelectorImplementationFormat,
                          selectorSignature,
-                         "self.",
-                         propertyName,
+                         memberTODORenameMeForSomethingThatRefersToClassToo,
                          generateCallBody(selectorInProperty));
   }
   
@@ -385,15 +384,17 @@ namespace {
 
         const auto locStart = selectorInProperty->getLocStart();
         const auto locEnd = selectorInProperty->getLocEnd();
-        
+       
         const auto codeBegin = context.compilerInstance->getSourceManager().getCharacterData(locStart);
         const auto codeEnd = context.compilerInstance->getSourceManager().getCharacterData(locEnd);
-        const auto c = llvm::StringRef(codeBegin, codeEnd - codeBegin);
+        const auto selectorSignature = llvm::StringRef(codeBegin, codeEnd - codeBegin);
         
-        providedBodyForHeader += c;
+        providedBodyForHeader += selectorSignature;
         providedBodyForHeader += ";\n";
+        
+        const auto memberDef = llvm::formatv(objcInstanceSelectorForwardingFormat, o->getName());
 
-        providedBodyForImplementation += generateSelectorDefinition(selectorInProperty, o->getName(), c);
+        providedBodyForImplementation += generateSelectorDefinition(selectorInProperty, selectorSignature, memberDef);
       }
       
       // FIXME: will fail with wildcards
@@ -409,6 +410,7 @@ namespace {
         }();
 
         const auto locStart = propertyDecl->getLocStart();
+        // FIXME: locEnd is pointing to the beginning of the property name :-(
         const auto locEnd = propertyDecl->getLocEnd();
 
         const auto codeBegin = context.compilerInstance->getSourceManager().getCharacterData(locStart);
@@ -420,15 +422,23 @@ namespace {
         providedBodyForHeader += propertySignature;
         providedBodyForHeader += propertyDecl->getName();
         providedBodyForHeader += ";\n";
+        
+        const auto f = [&]() -> std::string {
+          if (propertyDecl->isInstanceProperty()) {
+            return llvm::formatv(objcInstanceSelectorForwardingFormat, o->getName());
+          }
+          
+          return llvm::formatv(objcClassSelectorForwardingFormat, propertyInterfaceDecl->getName());
+        }();
 
         if (auto getterMethodDecl = propertyDecl->getGetterMethodDecl()) {
           const auto selectorSignature = generateSelectorSignature(getterMethodDecl);
-          providedBodyForImplementation += generateSelectorDefinition(getterMethodDecl, o->getName(), selectorSignature);
+          providedBodyForImplementation += generateSelectorDefinition(getterMethodDecl, selectorSignature, f);
         }
         
         if (auto setterMethodDecl = propertyDecl->getSetterMethodDecl()) {
           const auto selectorSignature = generateSelectorSignature(setterMethodDecl);
-          providedBodyForImplementation += generateSelectorDefinition(setterMethodDecl, o->getName(), selectorSignature);
+          providedBodyForImplementation += generateSelectorDefinition(setterMethodDecl, selectorSignature, f);
         }
       }
     }
@@ -524,7 +534,7 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
  
   auto VisitObjCPropertyDecl(clang::ObjCPropertyDecl* o) -> bool
   {
-    llvm::outs() << "Visiting property " << o->getName() << '\n';
+    //llvm::outs() << "Visiting property " << o->getName() << '\n';
     
     return visit([this](clang::ObjCPropertyDecl *o) {
       const auto typeInfo = o->getTypeSourceInfo();
