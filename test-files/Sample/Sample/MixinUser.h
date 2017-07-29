@@ -15,7 +15,8 @@
 
 @property (readonly) MixinWithSomething* mws
 	PROVIDE(@length -concatenateWithPrefix:suffix:)
-	PROVIDE(-buildSomeStruct: -invertName @aClassProperty);
+	PROVIDE(-buildSomeStruct: -invertName @aClassProperty)
+	PROVIDE(+someClassMethodWithString:andArray:);
 
 /* Generated in the file generated/MixinUser+mixin_property_mws_MixinWithSomething.h
  @property (readonly) NSNumber* length;

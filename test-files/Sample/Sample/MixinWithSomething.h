@@ -32,6 +32,8 @@ typedef struct SomeStruct
 
 @property (class) NSString* aClassProperty;
 
++ (NSInteger)someClassMethodWithString:(NSString*)s andArray:(NSArray*)array;
+
 @end
 
 @interface MixinWithSomething (SomeWeirdExtension)

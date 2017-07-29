@@ -175,6 +175,7 @@ namespace {
   auto getSelectorForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef selectorName, Extractor extractor) -> clang::ObjCMethodDecl*
   {
     const auto filter = [=](const clang::ObjCMethodDecl* methodDecl) {
+      //llvm::outs() << "Comparing " << methodDecl->getSelector().getAsString() << " with " << selectorName << '\n';
       return methodDecl->getSelector().getAsString() == selectorName;
     };
     
@@ -302,7 +303,7 @@ namespace {
       assert(paramLabels.size() == parameters.size());
 
       for (size_t size = parameters.size(), i = 0u; i < size; i++) {
-        callBody += llvm::formatv("{0}:({1}){2}", paramLabels[i], parameters[i]->getType().getAsString(), parameters[i]->getName());
+        callBody += llvm::formatv("{0}:({1}){2} ", paramLabels[i], parameters[i]->getType().getAsString(), parameters[i]->getName());
       }
       
       return callBody;
@@ -381,18 +382,30 @@ namespace {
         const auto selectorInProperty = getInstanceSelectorForInterface(propertyInterfaceDecl, selectorName);
         
         assert(selectorInProperty != nullptr);
-
-        const auto locStart = selectorInProperty->getLocStart();
-        const auto locEnd = selectorInProperty->getLocEnd();
-       
-        const auto codeBegin = context.compilerInstance->getSourceManager().getCharacterData(locStart);
-        const auto codeEnd = context.compilerInstance->getSourceManager().getCharacterData(locEnd);
-        const auto selectorSignature = llvm::StringRef(codeBegin, codeEnd - codeBegin);
         
+        const auto selectorSignature = generateSelectorSignature(selectorInProperty);
+
         providedBodyForHeader += selectorSignature;
         providedBodyForHeader += ";\n";
         
         const auto memberDef = llvm::formatv(objcInstanceSelectorForwardingFormat, o->getName());
+
+        providedBodyForImplementation += generateSelectorDefinition(selectorInProperty, selectorSignature, memberDef);
+      }
+      
+      // class methods (FIXME: will fail with wildcard)
+      // FIXME: have you noticed this is basically copy&paste from the instance selectors generator?
+      if (item.startswith("+")) {
+        const auto selectorName = item.substr(1);
+        const auto selectorInProperty = getClassSelectorForInterface(propertyInterfaceDecl, selectorName);
+        assert(selectorInProperty != nullptr);
+        
+        const auto selectorSignature = generateSelectorSignature(selectorInProperty);
+        
+        providedBodyForHeader += selectorSignature;
+        providedBodyForHeader += ";\n";
+        
+        const auto memberDef = llvm::formatv(objcClassSelectorForwardingFormat, propertyInterfaceDecl->getName());
 
         providedBodyForImplementation += generateSelectorDefinition(selectorInProperty, selectorSignature, memberDef);
       }
