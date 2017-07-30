@@ -87,7 +87,6 @@ namespace {
     llvm::StringRef value;
   };
   
-  // FIXME: why 10? Can it grow? OMG, 
   auto extractProvidedItems(const std::vector<clang::AnnotateAttr*>& attrs) -> std::vector<ProvidedItem>
   {
     auto splitList = llvm::SmallVector<llvm::StringRef, 10>();
@@ -201,6 +200,9 @@ namespace {
         return *selectorIt;
       }
     }
+    
+    //llvm::outs() << "Could not find something in " << propertyInterfaceDecl->getName() << '\n';
+    //assert(false && "FIXME: go up in the class hierarchy");
     
     // TODO: Go up to parents until finds the member or give up
     
@@ -424,6 +426,21 @@ namespace {
     {ProvidedItemType::Property, generatePropertyCode},
   };
   
+  auto getQualifiedType(clang::ObjCPropertyDecl* o) -> clang::QualType 
+  {
+    const auto t = llvm::dyn_cast<clang::ObjCObjectPointerType>(o->getTypeSourceInfo()->getType().getTypePtrOrNull());
+    assert(t != nullptr);
+    const auto pointee = t->getPointeeType();
+    return pointee;
+  }
+  
+  auto getPropertyType(clang::ObjCPropertyDecl* o) -> const clang::ObjCObjectType*
+  {
+    const auto qualType = getQualifiedType(o);
+    const auto type = qualType.split().Ty->getAs<clang::ObjCObjectType>();
+    return type;
+  }
+  
   // FIXME: no needs to say this function is way too large, doing too much and with a lot of copy&paste, right?
   auto generateExtension(clang::ObjCPropertyDecl* o,
                          CodeGeneratorContext& context,
@@ -443,67 +460,58 @@ namespace {
     const auto interfaceDecl = llvm::dyn_cast<clang::ObjCInterfaceDecl>(parent);
     
     assert(interfaceDecl != nullptr);
-
-    const auto propertyInterfaceDecl = [=]() -> clang::ObjCInterfaceDecl* {
-      const auto t = llvm::dyn_cast<clang::ObjCObjectPointerType>(o->getTypeSourceInfo()->getType().getTypePtrOrNull());
-      
-      assert(t != nullptr);
-      
-      t->dump();
-      
-      const auto pointee = t->getPointeeType();
-      
-      const auto interface = pointee.split().Ty->getAs<clang::ObjCInterfaceType>();
-      
-      if (interface != nullptr) {
-        return interface->getDecl();
-      }
-      
-      // when it not a member of an interface, it can be id or a pointer to a class
-      const auto nonInterfacePointer = pointee.split().Ty->getAs<clang::ObjCObjectType>();
-      llvm::outs() << "found a id pointer that implements " << nonInterfacePointer->getNumProtocols() << " protocols" << '\n';
-      nonInterfacePointer->dump();
-      
-      return nullptr;
-    }();
-    
-    assert(propertyInterfaceDecl != nullptr);
-    
-    if (propertyInterfaceDecl != nullptr) {
-      llvm::outs() << "property type: " << propertyInterfaceDecl->getName() << '\n';
-    }
     
     for (const auto& attr: attrs) {
       const auto annotationValue = attr->getAnnotation();
       llvm::outs() << "Found a property annotation!!! " << annotationValue << '\n';
-      //o->dump();
+      o->dump();
     }
     
-    context.headerStream << llvm::formatv(objCCategoryHeaderFormatBegin,
-                                              interfaceDecl->getName(),
-                                              propertyInterfaceDecl->getName(),
-                                              o->getName());
-    
-    context.implStream << llvm::formatv(objCCategoryImplementationFormatBegin,
-                                                      interfaceDecl->getName(),
-                                                      propertyInterfaceDecl->getName(),
-                                                      o->getName());
-    
-    for (const auto item: providedItems) {
-      assert(item.type != ProvidedItemType::Unknown && "FIXME: handle error");
-      const auto generator = generators[item.type];
-      llvm::outs() << "Processing item: " << item.value << '\n';
-      generator(context, propertyInterfaceDecl, o, item);
+    const auto propertyType = getPropertyType(o);
+
+    if (auto propertyInterfaceType = llvm::dyn_cast<clang::ObjCInterfaceType>(propertyType)) {
+      const auto propertyInterfaceDecl = propertyInterfaceType->getDecl();
+      
+      if (propertyInterfaceDecl != nullptr) {
+        llvm::outs() << "property type: " << propertyInterfaceDecl->getName() << '\n';
+      }
+      
+      context.headerStream << llvm::formatv(objCCategoryHeaderFormatBegin,
+                                                interfaceDecl->getName(),
+                                                propertyInterfaceDecl->getName(),
+                                                o->getName());
+      
+      context.implStream << llvm::formatv(objCCategoryImplementationFormatBegin,
+                                                        interfaceDecl->getName(),
+                                                        propertyInterfaceDecl->getName(),
+                                                        o->getName());
+      
+      for (const auto item: providedItems) {
+        assert(item.type != ProvidedItemType::Unknown && "FIXME: handle error");
+        const auto generator = generators[item.type];
+        llvm::outs() << "Processing item: " << item.value << '\n';
+        generator(context, propertyInterfaceDecl, o, item);
+      }
+      
+      context.headerStream << objcDeclarationEnd;
+      context.implStream << objcDeclarationEnd;
+
+      return;
     }
     
-    context.headerStream << objcDeclarationEnd;
-    context.implStream << objcDeclarationEnd;
+    //if (auto propertyIdType = llvm::dyn_cast<clang::ObjCObjectPointerType>(propertyType)) {
+    //  // The property is is a protocol
+    //  const auto protocols = propertyIdType->getP
+    //
+    //  llvm::outs() << "found a id pointer that implements " << protocols.size() << " protocols" << '\n';
+    //  nonInterfacePointer->dump(); 
+    //}
   }
 }
 
 static llvm::cl::OptionCategory commandLineCategory("Mixin With Steroids");
 
-struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
+struct ObjCVisitor: public clang::RecursiveASTVisitor<ObjCVisitor>
 {
   CodeGeneratorContext _context;
   KnownDeclarations& _knownDeclarations;
@@ -612,7 +620,7 @@ struct ObjCVisitor : public clang::RecursiveASTVisitor<ObjCVisitor>
   }
 };
 
-struct ObjCASTConsumer : public clang::ASTConsumer
+struct ObjCASTConsumer: public clang::ASTConsumer
 {
   KnownDeclarations _knownDeclarations;
   ObjCVisitor _visitor;
@@ -634,7 +642,7 @@ struct ObjCASTConsumer : public clang::ASTConsumer
 };
 
 // For each source file provided to the tool, a new FrontendAction is created.
-struct MyFrontendAction : public clang::ASTFrontendAction
+struct MyFrontendAction: public clang::ASTFrontendAction
 {
   std::string _headerContent;
   std::string _implContent;
