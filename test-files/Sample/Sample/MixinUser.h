@@ -28,12 +28,13 @@
 
 @property int anScalarProperty;
 
-// TODO: re-activate when implement support for protocols
-//@property NSString<SomeDelegate, SomeOtherDelegate>* aStringedProtocoledProperty
-//	PROVIDE(@length);
+@property NSString<SomeDelegate, SomeOtherDelegate>* aStringedProtocoledProperty
+	PROVIDE(@aMutableDictionary -doSomething:Else:) // from SomeDelegate
+	PROVIDE(-doSomethingOnOtherDelegate:) // from SomeOtherDelegate
+	PROVIDE(-lengthOfBytesUsingEncoding:); // From NSString
 
 //@property id<SomeDelegate> bProtocoledProperty
-//	PROVIDE(@* -* +*);
+//	PROVIDE(-description);
 
 @property SomeStruct aStructProperty;
 
@@ -61,7 +62,7 @@
  TODO: actually any type specifier can specify protocols, and id is a generic pointer (void*),
  handled differently by clang
 
- TODO: handle variadic parameter methods
+ TODO: handle variadic parameter methods (it's not possible to forward variadic functions). Forbid such functions
 
  TODO: support class property (@property (class, readonly) NSString* someProperty)
 */

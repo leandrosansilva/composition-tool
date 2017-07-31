@@ -165,7 +165,7 @@ namespace {
     typename InterfaceExtractor,
     typename CategoryExtractor, 
     typename ProtocolExtractor>
-  auto getMemberForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl,
+  auto getMemberForInterface(clang::ObjCContainerDecl* propertyInterfaceDecl,
                        Filter filter,
                        InterfaceExtractor interfaceExtractor,
                        CategoryExtractor categoryExtractor,
@@ -352,7 +352,7 @@ namespace {
     return llvm::formatv(objCSelectorSignatureFormat, methodType, returnType.getAsString(), signatureCore);
   }
   
-  auto generateInstanceMethodCode(CodeGeneratorContext& context, clang::ObjCInterfaceDecl* propertyInterfaceDecl, clang::ObjCPropertyDecl* propertyDecl, ProvidedItem item) -> void
+  auto generateCodeForInstanceMethod(CodeGeneratorContext& context, clang::ObjCPropertyDecl* propertyDecl, ProvidedItem item) -> void
   {
     const auto selectorName = item.value;
     const auto selectorInProperty = getInstanceSelectorForInterface(propertyInterfaceDecl, selectorName);
@@ -363,7 +363,7 @@ namespace {
     context.implStream << generateSelectorDefinition(selectorInProperty, selectorSignature, memberDef);
   }
   
-  auto generateClassMethodCode(CodeGeneratorContext& context, clang::ObjCInterfaceDecl* propertyInterfaceDecl, clang::ObjCPropertyDecl*, ProvidedItem item) -> void
+  auto generateCodeForClassMethod(CodeGeneratorContext& context, clang::ObjCPropertyDecl* propertyDecl, ProvidedItem item) -> void
   {
     const auto selectorName = item.value;
     const auto selectorInProperty = getClassSelectorForInterface(propertyInterfaceDecl, selectorName);
@@ -374,9 +374,9 @@ namespace {
     context.implStream << generateSelectorDefinition(selectorInProperty, selectorSignature, memberDef);
   }
   
-  auto generatePropertyCode(CodeGeneratorContext& context, clang::ObjCInterfaceDecl* propertyInterfaceDecl, clang::ObjCPropertyDecl*, ProvidedItem item) -> void
+  auto generateCodeForProperty(CodeGeneratorContext& context, clang::ObjCPropertyDecl* propertyDecl, ProvidedItem item) -> void
   {
-    const auto propertyName = item.value;
+    const auto memberPropertyName = item.value;
     
     const auto propertyDeclInMember = [&] {
       if (const auto instanceProperty = getInstancePropertyForInterface(propertyInterfaceDecl, propertyName)) {
@@ -418,27 +418,42 @@ namespace {
     }
   }
   
-  using ProvidedItemGenerator = std::add_pointer<void(CodeGeneratorContext&, clang::ObjCInterfaceDecl*, clang::ObjCPropertyDecl*, ProvidedItem)>::type;
+  using ProvidedItemGenerator = std::add_pointer<void(CodeGeneratorContext&, clang::ObjCPropertyDecl*, ProvidedItem)>::type;
   
   std::map<ProvidedItemType, ProvidedItemGenerator> generators {
-    {ProvidedItemType::InstanceMethod, generateInstanceMethodCode},
-    {ProvidedItemType::ClassMethod, generateClassMethodCode},
-    {ProvidedItemType::Property, generatePropertyCode},
+    {ProvidedItemType::InstanceMethod, generateCodeForInstanceMethod},
+    {ProvidedItemType::ClassMethod, generateCodeForClassMethod},
+    {ProvidedItemType::Property, generateCodeForProperty},
   };
   
-  auto getQualifiedType(clang::ObjCPropertyDecl* o) -> clang::QualType 
+  auto getPropertyPointerType(clang::ObjCPropertyDecl* o)
   {
-    const auto t = llvm::dyn_cast<clang::ObjCObjectPointerType>(o->getTypeSourceInfo()->getType().getTypePtrOrNull());
-    assert(t != nullptr);
-    const auto pointee = t->getPointeeType();
-    return pointee;
+    return llvm::dyn_cast<clang::ObjCObjectPointerType>(o->getTypeSourceInfo()->getType().getTypePtrOrNull());
   }
   
-  auto getPropertyType(clang::ObjCPropertyDecl* o) -> const clang::ObjCObjectType*
+  auto formatObjectType(const clang::ObjCObjectType* type) -> std::string
   {
-    const auto qualType = getQualifiedType(o);
-    const auto type = qualType.split().Ty->getAs<clang::ObjCObjectType>();
-    return type;
+    // An interface with no protocols or generic types
+    if (const auto interfaceType = llvm::dyn_cast<clang::ObjCInterfaceType>(type)) {
+      return interfaceType->getDecl()->getName();
+    }
+    
+    const auto objType = llvm::dyn_cast<clang::ObjCObjectType>(type);
+    
+    if (objType == nullptr) {
+      assert(false && "Unknown type!!!");
+      return "";
+    }
+    
+    const auto interface = objType->getInterface();
+    
+    if (interface != nullptr) {
+      return std::string{interface->getName()} + "_FIXME_EXTRACT_PROTOCOL_AND_GENERIC_ARGUMENTS";
+    }
+    
+    assert(type->isObjCId() && "This type should be id!!!!");
+    
+    return "id_FIXME_EXTRACT_PROTOCOL_ARGUMENTS";
   }
   
   // FIXME: no needs to say this function is way too large, doing too much and with a lot of copy&paste, right?
@@ -467,45 +482,31 @@ namespace {
       o->dump();
     }
     
-    const auto propertyType = getPropertyType(o);
-
-    if (auto propertyInterfaceType = llvm::dyn_cast<clang::ObjCInterfaceType>(propertyType)) {
-      const auto propertyInterfaceDecl = propertyInterfaceType->getDecl();
-      
-      if (propertyInterfaceDecl != nullptr) {
-        llvm::outs() << "property type: " << propertyInterfaceDecl->getName() << '\n';
-      }
-      
-      context.headerStream << llvm::formatv(objCCategoryHeaderFormatBegin,
-                                                interfaceDecl->getName(),
-                                                propertyInterfaceDecl->getName(),
-                                                o->getName());
-      
-      context.implStream << llvm::formatv(objCCategoryImplementationFormatBegin,
-                                                        interfaceDecl->getName(),
-                                                        propertyInterfaceDecl->getName(),
-                                                        o->getName());
-      
-      for (const auto item: providedItems) {
-        assert(item.type != ProvidedItemType::Unknown && "FIXME: handle error");
-        const auto generator = generators[item.type];
-        llvm::outs() << "Processing item: " << item.value << '\n';
-        generator(context, propertyInterfaceDecl, o, item);
-      }
-      
-      context.headerStream << objcDeclarationEnd;
-      context.implStream << objcDeclarationEnd;
-
-      return;
+    const auto propertyType = getPropertyPointerType(o);
+    
+    assert(propertyType != nullptr);
+    
+    const auto formattedInterfaceName = formatObjectType(propertyType->getObjectType());
+    
+    context.headerStream << llvm::formatv(objCCategoryHeaderFormatBegin,
+                                              interfaceDecl->getName(),
+                                              formattedInterfaceName,
+                                              o->getName());
+    
+    context.implStream << llvm::formatv(objCCategoryImplementationFormatBegin,
+                                                      interfaceDecl->getName(),
+                                                      formattedInterfaceName,
+                                                      o->getName());
+    
+    for (const auto item: providedItems) {
+      assert(item.type != ProvidedItemType::Unknown && "FIXME: handle error");
+      const auto generator = generators[item.type];
+      llvm::outs() << "Processing item: " << item.value << '\n';
+      generator(context, o, item);
     }
     
-    //if (auto propertyIdType = llvm::dyn_cast<clang::ObjCObjectPointerType>(propertyType)) {
-    //  // The property is is a protocol
-    //  const auto protocols = propertyIdType->getP
-    //
-    //  llvm::outs() << "found a id pointer that implements " << protocols.size() << " protocols" << '\n';
-    //  nonInterfacePointer->dump(); 
-    //}
+    context.headerStream << objcDeclarationEnd;
+    context.implStream << objcDeclarationEnd;
   }
 }
 

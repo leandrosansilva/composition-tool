@@ -7,8 +7,13 @@
 #import <Foundation/Foundation.h>
 
 @protocol SomeDelegate<NSObject>
+@property NSMutableDictionary* aMutableDictionary;
 - (void)doSomething;
 - (void)doSomething:(NSNumber*)smth Else:(NSString*)Else;
+@end
+
+@protocol SomeOtherDelegate<NSObject>
+- (void)doSomethingOnOtherDelegate:(NSNumber*)points;
 @end
 
 typedef struct SomeStruct
