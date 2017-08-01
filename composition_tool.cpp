@@ -432,59 +432,59 @@ namespace {
   
   auto generateCodeForClassMethod(CodeGeneratorContext& context, clang::ObjCPropertyDecl* propertyDecl, ProvidedItem item) -> void
   {
-    //const auto selectorName = item.value;
-    //const auto type = getPropertyPointerType(propertyDecl);
-    //const auto selectorInProperty = getClassSelectorForObjectType(type, selectorName);
-    //assert(selectorInProperty != nullptr);
-    //const auto selectorSignature = generateSelectorSignature(selectorInProperty);
-    //context.headerStream << selectorSignature << ";\n\n";
-    //const auto memberDef = llvm::formatv(objcClassSelectorForwardingFormat, propertyInterfaceDecl->getName());
-    //context.implStream << generateSelectorDefinition(selectorInProperty, selectorSignature, memberDef);
+    const auto selectorName = item.value;
+    const auto type = getPropertyPointerType(propertyDecl);
+    const auto selectorInProperty = getClassSelectorForObjectType(type, selectorName);
+    assert(selectorInProperty != nullptr);
+    const auto selectorSignature = generateSelectorSignature(selectorInProperty);
+    context.headerStream << selectorSignature << ";\n\n";
+    const auto memberDef = llvm::formatv(objcClassSelectorForwardingFormat, formatObjectType(type->getObjectType()));
+    context.implStream << generateSelectorDefinition(selectorInProperty, selectorSignature, memberDef);
   }
   
   auto generateCodeForProperty(CodeGeneratorContext& context, clang::ObjCPropertyDecl* propertyDecl, ProvidedItem item) -> void
   {
-    //const auto memberPropertyName = item.value;
-    //const auto type = getPropertyPointerType(propertyDecl);
-    //
-    //const auto propertyDeclInMember = [&]() -> clang::ObjCPropertyDecl* {
-    //  if (const auto instanceProperty = getInstancePropertyForObjectType(type, memberPropertyName)) {
-    //    return instanceProperty;
-    //  }
-    //
-    //  return getClassPropertyForObjectType(type, memberPropertyName);
-    //}();
-    //
-    //const auto locStart = propertyDeclInMember->getLocStart();
-    //// FIXME: locEnd is pointing to the beginning of the property name :-(
-    //const auto locEnd = propertyDeclInMember->getLocEnd();
-    //
-    //const auto codeBegin = context.compilerInstance->getSourceManager().getCharacterData(locStart);
-    //const auto codeEnd = context.compilerInstance->getSourceManager().getCharacterData(locEnd);
-    //const auto propertySignature = llvm::StringRef(codeBegin, codeEnd - codeBegin);
-    //
-    //llvm::outs() << "Property signature: " << propertySignature << '\n';
-    //
-    //context.headerStream << propertySignature;
-    //context.headerStream << propertyDeclInMember->getName() << ";\n\n";
-    //
-    //const auto f = [&]() -> std::string {
-    //  if (propertyDeclInMember->isInstanceProperty()) {
-    //    return llvm::formatv(objcInstanceSelectorForwardingFormat, propertyDeclInMember->getName());
-    //  }
-    //  
-    //  return llvm::formatv(objcClassSelectorForwardingFormat, propertyInterfaceDecl->getName());
-    //}();
-    //
-    //if (auto getterMethodDecl = propertyDeclInMember->getGetterMethodDecl()) {
-    //  const auto selectorSignature = generateSelectorSignature(getterMethodDecl);
-    //  context.implStream << generateSelectorDefinition(getterMethodDecl, selectorSignature, f);
-    //}
-    //
-    //if (auto setterMethodDecl = propertyDeclInMember->getSetterMethodDecl()) {
-    //  const auto selectorSignature = generateSelectorSignature(setterMethodDecl);
-    //  context.implStream << generateSelectorDefinition(setterMethodDecl, selectorSignature, f);
-    //}
+    const auto memberPropertyName = item.value;
+    const auto type = getPropertyPointerType(propertyDecl);
+    
+    const auto propertyDeclInMember = [&]() -> clang::ObjCPropertyDecl* {
+      if (const auto instanceProperty = getInstancePropertyForObjectType(type, memberPropertyName)) {
+        return instanceProperty;
+      }
+    
+      return getClassPropertyForObjectType(type, memberPropertyName);
+    }();
+    
+    const auto locStart = propertyDeclInMember->getLocStart();
+    // FIXME: locEnd is pointing to the beginning of the property name :-(
+    const auto locEnd = propertyDeclInMember->getLocEnd();
+    
+    const auto codeBegin = context.compilerInstance->getSourceManager().getCharacterData(locStart);
+    const auto codeEnd = context.compilerInstance->getSourceManager().getCharacterData(locEnd);
+    const auto propertySignature = llvm::StringRef(codeBegin, codeEnd - codeBegin);
+    
+    llvm::outs() << "Property signature: " << propertySignature << '\n';
+    
+    context.headerStream << propertySignature;
+    context.headerStream << propertyDeclInMember->getName() << ";\n\n";
+    
+    const auto f = [&]() -> std::string {
+      if (propertyDeclInMember->isInstanceProperty()) {
+        return llvm::formatv(objcInstanceSelectorForwardingFormat, propertyDeclInMember->getName());
+      }
+      
+      return llvm::formatv(objcClassSelectorForwardingFormat, formatObjectType(type->getObjectType()));
+    }();
+    
+    if (auto getterMethodDecl = propertyDeclInMember->getGetterMethodDecl()) {
+      const auto selectorSignature = generateSelectorSignature(getterMethodDecl);
+      context.implStream << generateSelectorDefinition(getterMethodDecl, selectorSignature, f);
+    }
+    
+    if (auto setterMethodDecl = propertyDeclInMember->getSetterMethodDecl()) {
+      const auto selectorSignature = generateSelectorSignature(setterMethodDecl);
+      context.implStream << generateSelectorDefinition(setterMethodDecl, selectorSignature, f);
+    }
   }
   
   using ProvidedItemGenerator = std::add_pointer<void(CodeGeneratorContext&, clang::ObjCPropertyDecl*, ProvidedItem)>::type;
