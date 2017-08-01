@@ -165,51 +165,67 @@ namespace {
     typename InterfaceExtractor,
     typename CategoryExtractor, 
     typename ProtocolExtractor>
-  auto getMemberForInterface(const clang::ObjCObjectType* type,
+  auto getMemberForObjectType(const clang::ObjCObjectType* type,
                        Filter filter,
                        InterfaceExtractor interfaceExtractor,
                        CategoryExtractor categoryExtractor,
                        ProtocolExtractor protocolExtractor) -> Result
   {
-    return nullptr;
-    //if (const auto propertyInterfaceDecl = llvm::dyn_cast<clang::ObjCInterfaceDecl>(type)) {
-    //  const auto categories = propertyInterfaceDecl->known_categories();
-    //  
-    //  // TODO: check the other protocols linked in the interface (no only ::protocols())
-    //  const auto protocols = propertyInterfaceDecl->protocols();
-    //  
-    //  const auto membersInInterface = interfaceExtractor(propertyInterfaceDecl);
-    //  
-    //  // FIXME: there's no need for building the list of pairs!
-    //  auto pairs = std::vector<std::pair<decltype(membersInInterface.begin()), decltype(membersInInterface.end())>>{};
-    //  pairs.emplace_back(membersInInterface.begin(), membersInInterface.end());
-    //  
-    //  for (const auto& category: categories) {
-    //    const auto membersInCategory = categoryExtractor(category);
-    //    pairs.emplace_back(membersInCategory.begin(), membersInCategory.end());
-    //  }
-    //  
-    //  // TODO: go up in the protocol hierarchy until find the member or skip
-    //  for (const auto& protocol: protocols) {
-    //    const auto membersInProtocol = protocolExtractor(protocol);
-    //    pairs.emplace_back(membersInProtocol.begin(), membersInProtocol.end());
-    //  }
-    //  
-    //  for (const auto pairIt: pairs) {
-    //    const auto selectorIt = std::find_if(pairIt.first, pairIt.second, filter);
-    //
-    //    if (selectorIt != pairIt.second) {
-    //      return *selectorIt;
-    //    }
-    //  }
-    //  
-    //  //llvm::outs() << "Could not find something in " << propertyInterfaceDecl->getName() << '\n';
-    //  //assert(false && "FIXME: go up in the class hierarchy");
-    //  
-    //  // TODO: Go up to parents until finds the member or give up
-    //  
-    //  return nullptr;
-    //}
+    const auto resultInInterface = [=]() -> Result {
+      const auto interfaceType = llvm::dyn_cast<clang::ObjCInterfaceType>(type);
+      
+      if (interfaceType == nullptr) {
+        return nullptr;
+      }
+      
+      const auto propertyInterfaceDecl = interfaceType->getDecl();
+      const auto categories = propertyInterfaceDecl->known_categories();
+      
+      // TODO: check the other protocols linked in the interface (no only ::protocols())
+      const auto protocols = propertyInterfaceDecl->protocols();
+      
+      const auto membersInInterface = interfaceExtractor(propertyInterfaceDecl);
+      
+      // FIXME: there's no need for building the list of pairs!
+      auto pairs = std::vector<std::pair<decltype(membersInInterface.begin()), decltype(membersInInterface.end())>>{};
+      pairs.emplace_back(membersInInterface.begin(), membersInInterface.end());
+      
+      for (const auto& category: categories) {
+        const auto membersInCategory = categoryExtractor(category);
+        pairs.emplace_back(membersInCategory.begin(), membersInCategory.end());
+      }
+      
+      // TODO: go up in the protocol hierarchy until find the member or skip
+      for (const auto& protocol: protocols) {
+        const auto membersInProtocol = protocolExtractor(protocol);
+        pairs.emplace_back(membersInProtocol.begin(), membersInProtocol.end());
+      }
+      
+      for (const auto pairIt: pairs) {
+        const auto selectorIt = std::find_if(pairIt.first, pairIt.second, filter);
+    
+        if (selectorIt != pairIt.second) {
+          return *selectorIt;
+        }
+      }
+      
+      //llvm::outs() << "Could not find something in " << propertyInterfaceDecl->getName() << '\n';
+      //assert(false && "FIXME: go up in the class hierarchy");
+      
+      // TODO: Go up to parents until finds the member or give up
+      
+      return nullptr;
+    }();
+    
+    // Could not find anything in the property interface type or any of its extensions or protocols.
+    // Let's now look at the protocols specified in the property type
+    // e.g: in `@property NSString<Prot1, Prot2>* prop;` look at Prot1 and Prot2
+    
+    // Here the property type is either Class or id
+    
+    assert(!type->isObjCClass() && "FIXME: Sorry, not support for properties of type Class :-(");
+    
+    assert(
   }
   
   template<typename Extractor>
@@ -220,7 +236,7 @@ namespace {
       return methodDecl->getSelector().getAsString() == selectorName;
     };
     
-    return getMemberForInterface<clang::ObjCMethodDecl*>(type, filter, extractor, extractor, extractor);
+    return getMemberForObjectType<clang::ObjCMethodDecl*>(type, filter, extractor, extractor, extractor);
   }
   
   auto getInstanceSelectorForObjectType(const clang::ObjCObjectType* type, const StringRef selectorName) -> clang::ObjCMethodDecl*
@@ -248,7 +264,7 @@ namespace {
       return propertyDecl->getName() == propertyName;
     };
     
-    return getMemberForInterface<clang::ObjCPropertyDecl*>(type, filter, extractor, extractor, extractor);
+    return getMemberForObjectType<clang::ObjCPropertyDecl*>(type, filter, extractor, extractor, extractor);
   }
   
   auto getInstancePropertyForObjectType(const clang::ObjCObjectType* type, const StringRef propertyName) -> clang::ObjCPropertyDecl*
