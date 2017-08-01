@@ -159,18 +159,21 @@ namespace {
     return nullptr;
   }
   
+  // FIXME: this function is way toooooooo long
   template<
     typename Result,
     typename Filter,
     typename InterfaceExtractor,
     typename CategoryExtractor, 
     typename ProtocolExtractor>
-  auto getMemberForObjectType(const clang::ObjCObjectType* type,
+  auto getMemberForObjectType(const clang::ObjCObjectPointerType* pointerType,
                        Filter filter,
                        InterfaceExtractor interfaceExtractor,
                        CategoryExtractor categoryExtractor,
                        ProtocolExtractor protocolExtractor) -> Result
   {
+    const auto type = pointerType->getObjectType();
+    
     const auto resultInInterface = [=]() -> Result {
       const auto interfaceType = llvm::dyn_cast<clang::ObjCInterfaceType>(type);
       
@@ -202,10 +205,10 @@ namespace {
       }
       
       for (const auto pairIt: pairs) {
-        const auto selectorIt = std::find_if(pairIt.first, pairIt.second, filter);
+        const auto it = std::find_if(pairIt.first, pairIt.second, filter);
     
-        if (selectorIt != pairIt.second) {
-          return *selectorIt;
+        if (it != pairIt.second) {
+          return *it;
         }
       }
       
@@ -217,19 +220,33 @@ namespace {
       return nullptr;
     }();
     
+    if (resultInInterface != nullptr) {
+      return resultInInterface;
+    }
+    
+    assert(!type->isObjCClass() && "FIXME: Sorry, not support for properties of type Class :-(");
+   
     // Could not find anything in the property interface type or any of its extensions or protocols.
     // Let's now look at the protocols specified in the property type
     // e.g: in `@property NSString<Prot1, Prot2>* prop;` look at Prot1 and Prot2
+    for (auto i = 0u, numberOfProtocols = pointerType->getNumProtocols(); i < numberOfProtocols; i++) {
+      const auto protocol = pointerType->getProtocol(i);
+      
+      // FIXME: this is copy&paste from above
+      const auto membersInProtocol = protocolExtractor(protocol);
+      
+      const auto it = std::find_if(membersInProtocol.begin(), membersInProtocol.end(), filter);
+      
+      if (it != membersInProtocol.end()) {
+        return *it;
+      }
+    }
     
-    // Here the property type is either Class or id
-    
-    assert(!type->isObjCClass() && "FIXME: Sorry, not support for properties of type Class :-(");
-    
-    assert(
+    return nullptr;
   }
   
   template<typename Extractor>
-  auto getSelectorForInterface(const clang::ObjCObjectType* type, const StringRef selectorName, Extractor extractor) -> clang::ObjCMethodDecl*
+  auto getSelectorForInterface(const clang::ObjCObjectPointerType* type, const StringRef selectorName, Extractor extractor) -> clang::ObjCMethodDecl*
   {
     const auto filter = [=](const clang::ObjCMethodDecl* methodDecl) {
       //llvm::outs() << "Comparing " << methodDecl->getSelector().getAsString() << " with " << selectorName << '\n';
@@ -239,7 +256,7 @@ namespace {
     return getMemberForObjectType<clang::ObjCMethodDecl*>(type, filter, extractor, extractor, extractor);
   }
   
-  auto getInstanceSelectorForObjectType(const clang::ObjCObjectType* type, const StringRef selectorName) -> clang::ObjCMethodDecl*
+  auto getInstanceSelectorForObjectType(const clang::ObjCObjectPointerType* type, const StringRef selectorName) -> clang::ObjCMethodDecl*
   {
     const auto extractor = [](const clang::ObjCContainerDecl* container) {
       return container->instance_methods();
@@ -248,7 +265,7 @@ namespace {
     return getSelectorForInterface(type, selectorName, extractor);
   }
   
-  auto getClassSelectorForObjectType(const clang::ObjCObjectType* type, const StringRef selectorName) -> clang::ObjCMethodDecl*
+  auto getClassSelectorForObjectType(const clang::ObjCObjectPointerType* type, const StringRef selectorName) -> clang::ObjCMethodDecl*
   {
     const auto extractor = [](const clang::ObjCContainerDecl* container) {
       return container->class_methods();
@@ -258,7 +275,7 @@ namespace {
   }
   
   template<typename Extractor>
-  auto getPropertyForObjectType(const clang::ObjCObjectType* type, const StringRef propertyName, Extractor extractor) -> clang::ObjCPropertyDecl*
+  auto getPropertyForObjectType(const clang::ObjCObjectPointerType* type, const StringRef propertyName, Extractor extractor) -> clang::ObjCPropertyDecl*
   {
     const auto filter = [=](const clang::ObjCPropertyDecl* propertyDecl) {
       return propertyDecl->getName() == propertyName;
@@ -267,7 +284,7 @@ namespace {
     return getMemberForObjectType<clang::ObjCPropertyDecl*>(type, filter, extractor, extractor, extractor);
   }
   
-  auto getInstancePropertyForObjectType(const clang::ObjCObjectType* type, const StringRef propertyName) -> clang::ObjCPropertyDecl*
+  auto getInstancePropertyForObjectType(const clang::ObjCObjectPointerType* type, const StringRef propertyName) -> clang::ObjCPropertyDecl*
   {
     const auto extractor = [](const clang::ObjCContainerDecl* container) {
       return container->instance_properties();
@@ -276,7 +293,7 @@ namespace {
     return getPropertyForObjectType(type, propertyName, extractor);
   }
   
-  auto getClassPropertyForObjectType(const clang::ObjCObjectType* type, const StringRef propertyName) -> clang::ObjCPropertyDecl*
+  auto getClassPropertyForObjectType(const clang::ObjCObjectPointerType* type, const StringRef propertyName) -> clang::ObjCPropertyDecl*
   {
     const auto extractor = [](const clang::ObjCContainerDecl* container) {
       return container->class_properties();
@@ -405,7 +422,7 @@ namespace {
   {
     const auto selectorName = item.value;
     const auto type = getPropertyPointerType(propertyDecl);
-    const auto selectorInProperty = getInstanceSelectorForObjectType(type->getObjectType(), selectorName);
+    const auto selectorInProperty = getInstanceSelectorForObjectType(type, selectorName);
     assert(selectorInProperty != nullptr);
     const auto selectorSignature = generateSelectorSignature(selectorInProperty);
     context.headerStream << selectorSignature << ";\n\n";
@@ -417,7 +434,7 @@ namespace {
   {
     //const auto selectorName = item.value;
     //const auto type = getPropertyPointerType(propertyDecl);
-    //const auto selectorInProperty = getClassSelectorForObjectType(type->getObjectType(), selectorName);
+    //const auto selectorInProperty = getClassSelectorForObjectType(type, selectorName);
     //assert(selectorInProperty != nullptr);
     //const auto selectorSignature = generateSelectorSignature(selectorInProperty);
     //context.headerStream << selectorSignature << ";\n\n";
@@ -431,11 +448,11 @@ namespace {
     //const auto type = getPropertyPointerType(propertyDecl);
     //
     //const auto propertyDeclInMember = [&]() -> clang::ObjCPropertyDecl* {
-    //  if (const auto instanceProperty = getInstancePropertyForObjectType(type->getObjectType(), memberPropertyName)) {
+    //  if (const auto instanceProperty = getInstancePropertyForObjectType(type, memberPropertyName)) {
     //    return instanceProperty;
     //  }
     //
-    //  return getClassPropertyForObjectType(type->getObjectType(), memberPropertyName);
+    //  return getClassPropertyForObjectType(type, memberPropertyName);
     //}();
     //
     //const auto locStart = propertyDeclInMember->getLocStart();
