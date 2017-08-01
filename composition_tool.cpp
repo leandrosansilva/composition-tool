@@ -165,105 +165,108 @@ namespace {
     typename InterfaceExtractor,
     typename CategoryExtractor, 
     typename ProtocolExtractor>
-  auto getMemberForInterface(clang::ObjCContainerDecl* propertyInterfaceDecl,
+  auto getMemberForInterface(const clang::ObjCObjectType* type,
                        Filter filter,
                        InterfaceExtractor interfaceExtractor,
                        CategoryExtractor categoryExtractor,
                        ProtocolExtractor protocolExtractor) -> Result
   {
-    const auto categories = propertyInterfaceDecl->known_categories();
-    
-    // TODO: check the other protocols linked in the interface (no only ::protocols())
-    const auto protocols = propertyInterfaceDecl->protocols();
-    
-    const auto membersInInterface = interfaceExtractor(propertyInterfaceDecl);
-    
-    // FIXME: there's no need for building the list of pairs!
-    auto pairs = std::vector<std::pair<decltype(membersInInterface.begin()), decltype(membersInInterface.end())>>{};
-    pairs.emplace_back(membersInInterface.begin(), membersInInterface.end());
-    
-    for (const auto& category: categories) {
-      const auto membersInCategory = categoryExtractor(category);
-      pairs.emplace_back(membersInCategory.begin(), membersInCategory.end());
-    }
-    
-    // TODO: go up in the protocol hierarchy until find the member or skip
-    for (const auto& protocol: protocols) {
-      const auto membersInProtocol = protocolExtractor(protocol);
-      pairs.emplace_back(membersInProtocol.begin(), membersInProtocol.end());
-    }
-    
-    for (const auto pairIt: pairs) {
-      const auto selectorIt = std::find_if(pairIt.first, pairIt.second, filter);
-
-      if (selectorIt != pairIt.second) {
-        return *selectorIt;
-      }
-    }
-    
-    //llvm::outs() << "Could not find something in " << propertyInterfaceDecl->getName() << '\n';
-    //assert(false && "FIXME: go up in the class hierarchy");
-    
-    // TODO: Go up to parents until finds the member or give up
-    
-    return nullptr;   
+    return nullptr;
+    //if (const auto propertyInterfaceDecl = llvm::dyn_cast<clang::ObjCInterfaceDecl>(type)) {
+    //  const auto categories = propertyInterfaceDecl->known_categories();
+    //  
+    //  // TODO: check the other protocols linked in the interface (no only ::protocols())
+    //  const auto protocols = propertyInterfaceDecl->protocols();
+    //  
+    //  const auto membersInInterface = interfaceExtractor(propertyInterfaceDecl);
+    //  
+    //  // FIXME: there's no need for building the list of pairs!
+    //  auto pairs = std::vector<std::pair<decltype(membersInInterface.begin()), decltype(membersInInterface.end())>>{};
+    //  pairs.emplace_back(membersInInterface.begin(), membersInInterface.end());
+    //  
+    //  for (const auto& category: categories) {
+    //    const auto membersInCategory = categoryExtractor(category);
+    //    pairs.emplace_back(membersInCategory.begin(), membersInCategory.end());
+    //  }
+    //  
+    //  // TODO: go up in the protocol hierarchy until find the member or skip
+    //  for (const auto& protocol: protocols) {
+    //    const auto membersInProtocol = protocolExtractor(protocol);
+    //    pairs.emplace_back(membersInProtocol.begin(), membersInProtocol.end());
+    //  }
+    //  
+    //  for (const auto pairIt: pairs) {
+    //    const auto selectorIt = std::find_if(pairIt.first, pairIt.second, filter);
+    //
+    //    if (selectorIt != pairIt.second) {
+    //      return *selectorIt;
+    //    }
+    //  }
+    //  
+    //  //llvm::outs() << "Could not find something in " << propertyInterfaceDecl->getName() << '\n';
+    //  //assert(false && "FIXME: go up in the class hierarchy");
+    //  
+    //  // TODO: Go up to parents until finds the member or give up
+    //  
+    //  return nullptr;
+    //}
   }
   
   template<typename Extractor>
-  auto getSelectorForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef selectorName, Extractor extractor) -> clang::ObjCMethodDecl*
+  auto getSelectorForInterface(const clang::ObjCObjectType* type, const StringRef selectorName, Extractor extractor) -> clang::ObjCMethodDecl*
   {
     const auto filter = [=](const clang::ObjCMethodDecl* methodDecl) {
       //llvm::outs() << "Comparing " << methodDecl->getSelector().getAsString() << " with " << selectorName << '\n';
       return methodDecl->getSelector().getAsString() == selectorName;
     };
     
-    return getMemberForInterface<clang::ObjCMethodDecl*>(propertyInterfaceDecl, filter, extractor, extractor, extractor);
+    return getMemberForInterface<clang::ObjCMethodDecl*>(type, filter, extractor, extractor, extractor);
   }
   
-  auto getInstanceSelectorForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef selectorName) -> clang::ObjCMethodDecl*
+  auto getInstanceSelectorForObjectType(const clang::ObjCObjectType* type, const StringRef selectorName) -> clang::ObjCMethodDecl*
   {
-    const auto extractor = [](clang::ObjCContainerDecl* container) {
+    const auto extractor = [](const clang::ObjCContainerDecl* container) {
       return container->instance_methods();
     };
     
-    return getSelectorForInterface(propertyInterfaceDecl, selectorName, extractor);
+    return getSelectorForInterface(type, selectorName, extractor);
   }
   
-  auto getClassSelectorForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef selectorName) -> clang::ObjCMethodDecl*
+  auto getClassSelectorForObjectType(const clang::ObjCObjectType* type, const StringRef selectorName) -> clang::ObjCMethodDecl*
   {
-    const auto extractor = [](clang::ObjCContainerDecl* container) {
+    const auto extractor = [](const clang::ObjCContainerDecl* container) {
       return container->class_methods();
     };
     
-    return getSelectorForInterface(propertyInterfaceDecl, selectorName, extractor);
+    return getSelectorForInterface(type, selectorName, extractor);
   }
   
   template<typename Extractor>
-  auto getPropertyForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef propertyName, Extractor extractor) -> clang::ObjCPropertyDecl*
+  auto getPropertyForObjectType(const clang::ObjCObjectType* type, const StringRef propertyName, Extractor extractor) -> clang::ObjCPropertyDecl*
   {
     const auto filter = [=](const clang::ObjCPropertyDecl* propertyDecl) {
       return propertyDecl->getName() == propertyName;
     };
     
-    return getMemberForInterface<clang::ObjCPropertyDecl*>(propertyInterfaceDecl, filter, extractor, extractor, extractor);
+    return getMemberForInterface<clang::ObjCPropertyDecl*>(type, filter, extractor, extractor, extractor);
   }
   
-  auto getInstancePropertyForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef propertyName) -> clang::ObjCPropertyDecl*
+  auto getInstancePropertyForObjectType(const clang::ObjCObjectType* type, const StringRef propertyName) -> clang::ObjCPropertyDecl*
   {
-    const auto extractor = [](clang::ObjCContainerDecl* container) {
+    const auto extractor = [](const clang::ObjCContainerDecl* container) {
       return container->instance_properties();
     };
     
-    return getPropertyForInterface(propertyInterfaceDecl, propertyName, extractor);
+    return getPropertyForObjectType(type, propertyName, extractor);
   }
   
-  auto getClassPropertyForInterface(clang::ObjCInterfaceDecl* propertyInterfaceDecl, const StringRef propertyName) -> clang::ObjCPropertyDecl*
+  auto getClassPropertyForObjectType(const clang::ObjCObjectType* type, const StringRef propertyName) -> clang::ObjCPropertyDecl*
   {
-    const auto extractor = [](clang::ObjCContainerDecl* container) {
+    const auto extractor = [](const clang::ObjCContainerDecl* container) {
       return container->class_properties();
     };
     
-    return getPropertyForInterface(propertyInterfaceDecl, propertyName, extractor);
+    return getPropertyForObjectType(type, propertyName, extractor);
   }
   
   auto generateCallBody(clang::ObjCMethodDecl* selectorInProperty) -> std::string
@@ -351,81 +354,7 @@ namespace {
     
     return llvm::formatv(objCSelectorSignatureFormat, methodType, returnType.getAsString(), signatureCore);
   }
-  
-  auto generateCodeForInstanceMethod(CodeGeneratorContext& context, clang::ObjCPropertyDecl* propertyDecl, ProvidedItem item) -> void
-  {
-    const auto selectorName = item.value;
-    const auto selectorInProperty = getInstanceSelectorForInterface(propertyInterfaceDecl, selectorName);
-    assert(selectorInProperty != nullptr);
-    const auto selectorSignature = generateSelectorSignature(selectorInProperty);
-    context.headerStream << selectorSignature << ";\n\n";
-    const auto memberDef = llvm::formatv(objcInstanceSelectorForwardingFormat, propertyDecl->getName());
-    context.implStream << generateSelectorDefinition(selectorInProperty, selectorSignature, memberDef);
-  }
-  
-  auto generateCodeForClassMethod(CodeGeneratorContext& context, clang::ObjCPropertyDecl* propertyDecl, ProvidedItem item) -> void
-  {
-    const auto selectorName = item.value;
-    const auto selectorInProperty = getClassSelectorForInterface(propertyInterfaceDecl, selectorName);
-    assert(selectorInProperty != nullptr);
-    const auto selectorSignature = generateSelectorSignature(selectorInProperty);
-    context.headerStream << selectorSignature << ";\n\n";
-    const auto memberDef = llvm::formatv(objcClassSelectorForwardingFormat, propertyInterfaceDecl->getName());
-    context.implStream << generateSelectorDefinition(selectorInProperty, selectorSignature, memberDef);
-  }
-  
-  auto generateCodeForProperty(CodeGeneratorContext& context, clang::ObjCPropertyDecl* propertyDecl, ProvidedItem item) -> void
-  {
-    const auto memberPropertyName = item.value;
     
-    const auto propertyDeclInMember = [&] {
-      if (const auto instanceProperty = getInstancePropertyForInterface(propertyInterfaceDecl, propertyName)) {
-        return instanceProperty;
-      }
-
-      return getClassPropertyForInterface(propertyInterfaceDecl, propertyName);
-    }();
-    
-    const auto locStart = propertyDeclInMember->getLocStart();
-    // FIXME: locEnd is pointing to the beginning of the property name :-(
-    const auto locEnd = propertyDeclInMember->getLocEnd();
-
-    const auto codeBegin = context.compilerInstance->getSourceManager().getCharacterData(locStart);
-    const auto codeEnd = context.compilerInstance->getSourceManager().getCharacterData(locEnd);
-    const auto propertySignature = llvm::StringRef(codeBegin, codeEnd - codeBegin);
-
-    llvm::outs() << "Property signature: " << propertySignature << '\n';
-    
-    context.headerStream << propertySignature;
-    context.headerStream << propertyDeclInMember->getName() << ";\n\n";
-  
-    const auto f = [&]() -> std::string {
-      if (propertyDeclInMember->isInstanceProperty()) {
-        return llvm::formatv(objcInstanceSelectorForwardingFormat, propertyDeclInMember->getName());
-      }
-      
-      return llvm::formatv(objcClassSelectorForwardingFormat, propertyInterfaceDecl->getName());
-    }();
-
-    if (auto getterMethodDecl = propertyDeclInMember->getGetterMethodDecl()) {
-      const auto selectorSignature = generateSelectorSignature(getterMethodDecl);
-      context.implStream << generateSelectorDefinition(getterMethodDecl, selectorSignature, f);
-    }
-    
-    if (auto setterMethodDecl = propertyDeclInMember->getSetterMethodDecl()) {
-      const auto selectorSignature = generateSelectorSignature(setterMethodDecl);
-      context.implStream << generateSelectorDefinition(setterMethodDecl, selectorSignature, f);
-    }
-  }
-  
-  using ProvidedItemGenerator = std::add_pointer<void(CodeGeneratorContext&, clang::ObjCPropertyDecl*, ProvidedItem)>::type;
-  
-  std::map<ProvidedItemType, ProvidedItemGenerator> generators {
-    {ProvidedItemType::InstanceMethod, generateCodeForInstanceMethod},
-    {ProvidedItemType::ClassMethod, generateCodeForClassMethod},
-    {ProvidedItemType::Property, generateCodeForProperty},
-  };
-  
   auto getPropertyPointerType(clang::ObjCPropertyDecl* o)
   {
     return llvm::dyn_cast<clang::ObjCObjectPointerType>(o->getTypeSourceInfo()->getType().getTypePtrOrNull());
@@ -456,6 +385,83 @@ namespace {
     return "id_FIXME_EXTRACT_PROTOCOL_ARGUMENTS";
   }
   
+  auto generateCodeForInstanceMethod(CodeGeneratorContext& context, clang::ObjCPropertyDecl* propertyDecl, ProvidedItem item) -> void
+  {
+    const auto selectorName = item.value;
+    const auto type = getPropertyPointerType(propertyDecl);
+    const auto selectorInProperty = getInstanceSelectorForObjectType(type->getObjectType(), selectorName);
+    assert(selectorInProperty != nullptr);
+    const auto selectorSignature = generateSelectorSignature(selectorInProperty);
+    context.headerStream << selectorSignature << ";\n\n";
+    const auto memberDef = llvm::formatv(objcInstanceSelectorForwardingFormat, propertyDecl->getName());
+    context.implStream << generateSelectorDefinition(selectorInProperty, selectorSignature, memberDef);
+  }
+  
+  auto generateCodeForClassMethod(CodeGeneratorContext& context, clang::ObjCPropertyDecl* propertyDecl, ProvidedItem item) -> void
+  {
+    //const auto selectorName = item.value;
+    //const auto type = getPropertyPointerType(propertyDecl);
+    //const auto selectorInProperty = getClassSelectorForObjectType(type->getObjectType(), selectorName);
+    //assert(selectorInProperty != nullptr);
+    //const auto selectorSignature = generateSelectorSignature(selectorInProperty);
+    //context.headerStream << selectorSignature << ";\n\n";
+    //const auto memberDef = llvm::formatv(objcClassSelectorForwardingFormat, propertyInterfaceDecl->getName());
+    //context.implStream << generateSelectorDefinition(selectorInProperty, selectorSignature, memberDef);
+  }
+  
+  auto generateCodeForProperty(CodeGeneratorContext& context, clang::ObjCPropertyDecl* propertyDecl, ProvidedItem item) -> void
+  {
+    //const auto memberPropertyName = item.value;
+    //const auto type = getPropertyPointerType(propertyDecl);
+    //
+    //const auto propertyDeclInMember = [&]() -> clang::ObjCPropertyDecl* {
+    //  if (const auto instanceProperty = getInstancePropertyForObjectType(type->getObjectType(), memberPropertyName)) {
+    //    return instanceProperty;
+    //  }
+    //
+    //  return getClassPropertyForObjectType(type->getObjectType(), memberPropertyName);
+    //}();
+    //
+    //const auto locStart = propertyDeclInMember->getLocStart();
+    //// FIXME: locEnd is pointing to the beginning of the property name :-(
+    //const auto locEnd = propertyDeclInMember->getLocEnd();
+    //
+    //const auto codeBegin = context.compilerInstance->getSourceManager().getCharacterData(locStart);
+    //const auto codeEnd = context.compilerInstance->getSourceManager().getCharacterData(locEnd);
+    //const auto propertySignature = llvm::StringRef(codeBegin, codeEnd - codeBegin);
+    //
+    //llvm::outs() << "Property signature: " << propertySignature << '\n';
+    //
+    //context.headerStream << propertySignature;
+    //context.headerStream << propertyDeclInMember->getName() << ";\n\n";
+    //
+    //const auto f = [&]() -> std::string {
+    //  if (propertyDeclInMember->isInstanceProperty()) {
+    //    return llvm::formatv(objcInstanceSelectorForwardingFormat, propertyDeclInMember->getName());
+    //  }
+    //  
+    //  return llvm::formatv(objcClassSelectorForwardingFormat, propertyInterfaceDecl->getName());
+    //}();
+    //
+    //if (auto getterMethodDecl = propertyDeclInMember->getGetterMethodDecl()) {
+    //  const auto selectorSignature = generateSelectorSignature(getterMethodDecl);
+    //  context.implStream << generateSelectorDefinition(getterMethodDecl, selectorSignature, f);
+    //}
+    //
+    //if (auto setterMethodDecl = propertyDeclInMember->getSetterMethodDecl()) {
+    //  const auto selectorSignature = generateSelectorSignature(setterMethodDecl);
+    //  context.implStream << generateSelectorDefinition(setterMethodDecl, selectorSignature, f);
+    //}
+  }
+  
+  using ProvidedItemGenerator = std::add_pointer<void(CodeGeneratorContext&, clang::ObjCPropertyDecl*, ProvidedItem)>::type;
+  
+  const std::map<ProvidedItemType, ProvidedItemGenerator> generators {
+    {ProvidedItemType::InstanceMethod, generateCodeForInstanceMethod},
+    {ProvidedItemType::ClassMethod, generateCodeForClassMethod},
+    {ProvidedItemType::Property, generateCodeForProperty},
+  };
+ 
   // FIXME: no needs to say this function is way too large, doing too much and with a lot of copy&paste, right?
   auto generateExtension(clang::ObjCPropertyDecl* o,
                          CodeGeneratorContext& context,
@@ -500,7 +506,7 @@ namespace {
     
     for (const auto item: providedItems) {
       assert(item.type != ProvidedItemType::Unknown && "FIXME: handle error");
-      const auto generator = generators[item.type];
+      const auto generator = generators.at(item.type);
       llvm::outs() << "Processing item: " << item.value << '\n';
       generator(context, o, item);
     }
