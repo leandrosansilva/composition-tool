@@ -31,7 +31,7 @@
 @property NSString<SomeDelegate, SomeOtherDelegate>* aStringedProtocoledProperty
 	PROVIDE(@aMutableDictionary -doSomething:Else:) // from SomeDelegate
 	PROVIDE(-doSomethingOnOtherDelegate:) // from SomeOtherDelegate
-	PROVIDE(-lengthOfBytesUsingEncoding:); // From NSString
+	/*PROVIDE(-lengthOfBytesUsingEncoding:)*/; // From NSString
 
 //@property id<SomeDelegate> bProtocoledProperty
 //	PROVIDE(-description);
