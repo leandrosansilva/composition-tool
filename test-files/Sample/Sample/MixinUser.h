@@ -16,7 +16,8 @@
 @property (readonly) MixinWithSomething* mws
 	PROVIDE(@length -concatenateWithPrefix:suffix:)
 	PROVIDE(-buildSomeStruct: -invertName @aClassProperty)
-	PROVIDE(+someClassMethodWithString:andArray:);
+	PROVIDE(+someClassMethodWithString:andArray:)
+	PROVIDE(@anyValue);
 
 /* Generated in the file generated/MixinUser+mixin_property_mws_MixinWithSomething.h
  @property (readonly) NSNumber* length;
@@ -63,6 +64,4 @@
  handled differently by clang
 
  TODO: handle variadic parameter methods (it's not possible to forward variadic functions). Forbid such functions
-
- TODO: support class property (@property (class, readonly) NSString* someProperty)
 */

@@ -22,7 +22,13 @@ typedef struct SomeStruct
 	int value;
 } SomeStruct;
 
-@interface MixinWithSomething : NSObject
+@interface TheBaseOfTheMixinWithSomething: NSObject
+
+@property (readonly) NSValue* anyValue;
+
+@end
+
+@interface MixinWithSomething : TheBaseOfTheMixinWithSomething
 
 - (instancetype)initWithName:(NSString*)name;
 

@@ -159,6 +159,65 @@ namespace {
     return nullptr;
   }
   
+  template<
+    typename Result,
+    typename Filter,
+    typename InterfaceExtractor,
+    typename CategoryExtractor, 
+    typename ProtocolExtractor>
+  auto getMemberForObjectInterfaceType(const clang::ObjCInterfaceType* interfaceType,
+                       Filter filter,
+                       InterfaceExtractor interfaceExtractor,
+                       CategoryExtractor categoryExtractor,
+                       ProtocolExtractor protocolExtractor) -> Result
+  {
+    const auto propertyInterfaceDecl = interfaceType->getDecl();
+    const auto categories = propertyInterfaceDecl->known_categories();
+    
+    // TODO: check the other protocols linked in the interface (no only ::protocols())
+    const auto protocols = propertyInterfaceDecl->protocols();
+    
+    const auto membersInInterface = interfaceExtractor(propertyInterfaceDecl);
+    
+    // FIXME: there's no need for building the list of pairs!
+    auto pairs = std::vector<std::pair<decltype(membersInInterface.begin()), decltype(membersInInterface.end())>>{};
+    pairs.emplace_back(membersInInterface.begin(), membersInInterface.end());
+    
+    for (const auto& category: categories) {
+      const auto membersInCategory = categoryExtractor(category);
+      pairs.emplace_back(membersInCategory.begin(), membersInCategory.end());
+    }
+    
+    // TODO: go up in the protocol hierarchy until find the member or skip
+    for (const auto& protocol: protocols) {
+      const auto membersInProtocol = protocolExtractor(protocol);
+      pairs.emplace_back(membersInProtocol.begin(), membersInProtocol.end());
+    }
+    
+    for (const auto pairIt: pairs) {
+      const auto it = std::find_if(pairIt.first, pairIt.second, filter);
+  
+      if (it != pairIt.second) {
+        return *it;
+      }
+    }
+    
+    // TODO: go up in the protocol hierarchy
+    
+    const auto superClassType = propertyInterfaceDecl->getSuperClassType();
+    
+    const auto isRootClass = (superClassType == nullptr);
+    
+    if (isRootClass) {
+      llvm::outs() << "Could not find something in " << propertyInterfaceDecl->getName() << " neither on it's parent :-(\n";
+      return Result();        
+    }
+    
+    // Look for the member in the parent, in case we are not in a root class (NSObject or similar)
+    return getMemberForObjectInterfaceType<Result>(llvm::dyn_cast<clang::ObjCInterfaceType>(superClassType),
+                                           filter, interfaceExtractor, categoryExtractor, protocolExtractor);
+  }
+  
   // FIXME: this function is way toooooooo long
   template<
     typename Result,
@@ -174,57 +233,19 @@ namespace {
   {
     const auto type = pointerType->getObjectType();
     
-    const auto resultInInterface = [=]() -> Result {
-      const auto interfaceType = llvm::dyn_cast<clang::ObjCInterfaceType>(type);
-      
-      if (interfaceType == nullptr) {
-        return nullptr;
+    const auto resultInInterface = [=] {
+      if (const auto interfaceType = llvm::dyn_cast<clang::ObjCInterfaceType>(type)) {
+        return getMemberForObjectInterfaceType<Result>(interfaceType, filter, interfaceExtractor, categoryExtractor, protocolExtractor);
       }
-      
-      const auto propertyInterfaceDecl = interfaceType->getDecl();
-      const auto categories = propertyInterfaceDecl->known_categories();
-      
-      // TODO: check the other protocols linked in the interface (no only ::protocols())
-      const auto protocols = propertyInterfaceDecl->protocols();
-      
-      const auto membersInInterface = interfaceExtractor(propertyInterfaceDecl);
-      
-      // FIXME: there's no need for building the list of pairs!
-      auto pairs = std::vector<std::pair<decltype(membersInInterface.begin()), decltype(membersInInterface.end())>>{};
-      pairs.emplace_back(membersInInterface.begin(), membersInInterface.end());
-      
-      for (const auto& category: categories) {
-        const auto membersInCategory = categoryExtractor(category);
-        pairs.emplace_back(membersInCategory.begin(), membersInCategory.end());
-      }
-      
-      // TODO: go up in the protocol hierarchy until find the member or skip
-      for (const auto& protocol: protocols) {
-        const auto membersInProtocol = protocolExtractor(protocol);
-        pairs.emplace_back(membersInProtocol.begin(), membersInProtocol.end());
-      }
-      
-      for (const auto pairIt: pairs) {
-        const auto it = std::find_if(pairIt.first, pairIt.second, filter);
-    
-        if (it != pairIt.second) {
-          return *it;
-        }
-      }
-      
-      //llvm::outs() << "Could not find something in " << propertyInterfaceDecl->getName() << '\n';
-      //assert(false && "FIXME: go up in the class hierarchy");
-      
-      // TODO: Go up to parents until finds the member or give up
-      
-      return nullptr;
+
+      return Result();
     }();
     
     if (resultInInterface != nullptr) {
       return resultInInterface;
     }
     
-    assert(!type->isObjCClass() && "FIXME: Sorry, not support for properties of type Class :-(");
+    assert(!type->isObjCClass() && "FIXME: Sorry, not support for properties of type Class yet :-(");
    
     // Could not find anything in the property interface type or any of its extensions or protocols.
     // Let's now look at the protocols specified in the property type
@@ -454,6 +475,8 @@ namespace {
     
       return getClassPropertyForObjectType(type, memberPropertyName);
     }();
+    
+    assert(propertyDeclInMember != nullptr);
     
     const auto locStart = propertyDeclInMember->getLocStart();
     // FIXME: locEnd is pointing to the beginning of the property name :-(
