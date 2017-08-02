@@ -6,13 +6,24 @@
 
 #import <Foundation/Foundation.h>
 
+@protocol TheFirstParentProtocol<NSObject>
+- (NSString*)aMethodInTheParentProtocol:(NSInteger*)argument;
+@property uint32_t aNumberInTheFirstParentProtocol;
+@end
+
+@protocol TheSecondParentProtocol<NSObject>
+- (NSString*)aMethodInTheSecondParentProtocol:(NSInteger*)argument;
+@property uint32_t aNumberInTheSecondParentProtocol;
+@end
+
+
 @protocol SomeDelegate<NSObject>
 @property NSMutableDictionary* aMutableDictionary;
 - (void)doSomething;
 - (void)doSomething:(NSNumber*)smth Else:(NSString*)Else;
 @end
 
-@protocol SomeOtherDelegate<NSObject>
+@protocol SomeOtherDelegate<TheFirstParentProtocol, TheSecondParentProtocol>
 - (void)doSomethingOnOtherDelegate:(NSNumber*)points;
 @end
 
