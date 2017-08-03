@@ -216,20 +216,6 @@ namespace {
       pairs.emplace_back(membersInCategory.begin(), membersInCategory.end());
     }
     
-    
-    //const auto protocols = propertyInterfaceDecl->protocols();
-    //
-    //llvm::outs() << "interface " << interfaceType->getDecl()->getName()
-    //             << " has " << std::distance(protocols.begin(), protocols.end())
-    //             << " referenced protocols\n";
-    //// TODO: go up in the protocol hierarchy until find the member or skip
-    //for (const auto& protocol: protocols) {
-    //  const auto membersInProtocol = protocolExtractor(protocol);
-    //  llvm::outs() << "Extracting protocol " << protocol->getName() << " that has "
-    //               << std::distance(membersInProtocol.begin(), membersInProtocol.end()) << " members\n";
-    //  pairs.emplace_back(membersInProtocol.begin(), membersInProtocol.end());
-    //}
-    
     for (const auto pairIt: pairs) {
       const auto it = std::find_if(pairIt.first, pairIt.second, filter);
   
@@ -238,7 +224,6 @@ namespace {
       }
     }
     
-    // TODO: maaaaaybe all_referenced_protocols() contains all protocols this interface should implement 
     const auto protocols = propertyInterfaceDecl->protocols();
     
     // For sure it is in some protocol!
