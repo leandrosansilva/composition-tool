@@ -21,12 +21,6 @@
 	PROVIDE(-aMethodInTheSecondParentProtocol: @aNumberInTheSecondParentProtocol)
 	PROVIDE(@anyValue);
 
-/* Generated in the file generated/MixinUser+mixin_property_mws_MixinWithSomething.h
- @property (readonly) NSNumber* length;
- - (NSString*)invertName;
- - (NSString*)concatenateWithPrefix:(NSString*)prefix suffix:(NSString*)suffix;
-*/
-
 @property NSNumber* aNormalProperty PROVIDE(-intValue);
 
 @property int anScalarProperty;

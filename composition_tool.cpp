@@ -162,6 +162,38 @@ namespace {
   template<
     typename Result,
     typename Filter,
+    typename ProtocolExtractor>
+  auto getMemberForProtocols(llvm::iterator_range<clang::ObjCProtocolDecl*const*> protocols, Filter filter, ProtocolExtractor protocolExtractor) -> Result
+  {
+    for (const auto protocol: protocols) {
+      llvm::outs() << "checking member in protocol " << protocol->getName() << '\n';
+      const auto membersInProtocol = protocolExtractor(protocol);
+      
+      const auto it = std::find_if(std::begin(membersInProtocol), std::end(membersInProtocol), filter);
+      
+      if (it != std::end(membersInProtocol)) {
+        return *it;
+      }
+    }
+    
+    // Depth first search on referenced protocols tree!
+    for (const auto protocol: protocols) {
+      llvm::outs() << "entering recursively in " << protocol->getName() << '\n';
+      const auto referencedProtocols = protocol->protocols();
+      const auto memberInReferencedProtocol = getMemberForProtocols<Result>(referencedProtocols, filter, protocolExtractor);
+      
+      if (memberInReferencedProtocol != Result()) {
+        return memberInReferencedProtocol;
+      }
+    }
+    
+    return Result();
+  }
+  
+  // FIXME: this method is way too big! Split it in small pieces!
+  template<
+    typename Result,
+    typename Filter,
     typename InterfaceExtractor,
     typename CategoryExtractor, 
     typename ProtocolExtractor>
@@ -173,10 +205,6 @@ namespace {
   {
     const auto propertyInterfaceDecl = interfaceType->getDecl();
     const auto categories = propertyInterfaceDecl->known_categories();
-    
-    // TODO: check the other protocols linked in the interface (no only ::protocols())
-    const auto protocols = propertyInterfaceDecl->protocols();
-    
     const auto membersInInterface = interfaceExtractor(propertyInterfaceDecl);
     
     // FIXME: there's no need for building the list of pairs!
@@ -188,11 +216,19 @@ namespace {
       pairs.emplace_back(membersInCategory.begin(), membersInCategory.end());
     }
     
-    // TODO: go up in the protocol hierarchy until find the member or skip
-    for (const auto& protocol: protocols) {
-      const auto membersInProtocol = protocolExtractor(protocol);
-      pairs.emplace_back(membersInProtocol.begin(), membersInProtocol.end());
-    }
+    
+    //const auto protocols = propertyInterfaceDecl->protocols();
+    //
+    //llvm::outs() << "interface " << interfaceType->getDecl()->getName()
+    //             << " has " << std::distance(protocols.begin(), protocols.end())
+    //             << " referenced protocols\n";
+    //// TODO: go up in the protocol hierarchy until find the member or skip
+    //for (const auto& protocol: protocols) {
+    //  const auto membersInProtocol = protocolExtractor(protocol);
+    //  llvm::outs() << "Extracting protocol " << protocol->getName() << " that has "
+    //               << std::distance(membersInProtocol.begin(), membersInProtocol.end()) << " members\n";
+    //  pairs.emplace_back(membersInProtocol.begin(), membersInProtocol.end());
+    //}
     
     for (const auto pairIt: pairs) {
       const auto it = std::find_if(pairIt.first, pairIt.second, filter);
@@ -202,7 +238,15 @@ namespace {
       }
     }
     
-    // TODO: go up in the protocol hierarchy
+    // TODO: maaaaaybe all_referenced_protocols() contains all protocols this interface should implement 
+    const auto protocols = propertyInterfaceDecl->protocols();
+    
+    // For sure it is in some protocol!
+    const auto memberInProtocols = getMemberForProtocols<Result>(protocols, filter, protocolExtractor);
+    
+    if (memberInProtocols != Result()) {
+      return memberInProtocols;
+    }
     
     const auto superClassType = propertyInterfaceDecl->getSuperClassType();
     
@@ -210,15 +254,16 @@ namespace {
     
     if (isRootClass) {
       llvm::outs() << "Could not find something in " << propertyInterfaceDecl->getName() << " neither on it's parent :-(\n";
-      return Result();        
+      return Result();
     }
     
     // Look for the member in the parent, in case we are not in a root class (NSObject or similar)
+    // It's recursive, but as the class hierarchy is not deep (what are you doing?!),
+    // there is no problems of stack overflow
     return getMemberForObjectInterfaceType<Result>(llvm::dyn_cast<clang::ObjCInterfaceType>(superClassType),
-                                           filter, interfaceExtractor, categoryExtractor, protocolExtractor);
+                                                  filter, interfaceExtractor, categoryExtractor, protocolExtractor);
   }
   
-  // FIXME: this function is way toooooooo long
   template<
     typename Result,
     typename Filter,
@@ -232,6 +277,9 @@ namespace {
                        ProtocolExtractor protocolExtractor) -> Result
   {
     const auto type = pointerType->getObjectType();
+    
+    llvm::outs() << "Dumping type \n";
+    type->dump();
     
     const auto resultInInterface = [=] {
       if (const auto interfaceType = llvm::dyn_cast<clang::ObjCInterfaceType>(type)) {
@@ -270,7 +318,7 @@ namespace {
   auto getSelectorForInterface(const clang::ObjCObjectPointerType* type, const StringRef selectorName, Extractor extractor) -> clang::ObjCMethodDecl*
   {
     const auto filter = [=](const clang::ObjCMethodDecl* methodDecl) {
-      //llvm::outs() << "Comparing " << methodDecl->getSelector().getAsString() << " with " << selectorName << '\n';
+      llvm::outs() << "Comparing " << methodDecl->getSelector().getAsString() << " with " << selectorName << '\n';
       return methodDecl->getSelector().getAsString() == selectorName;
     };
     
@@ -299,6 +347,7 @@ namespace {
   auto getPropertyForObjectType(const clang::ObjCObjectPointerType* type, const StringRef propertyName, Extractor extractor) -> clang::ObjCPropertyDecl*
   {
     const auto filter = [=](const clang::ObjCPropertyDecl* propertyDecl) {
+      llvm::outs() << "comparing " << propertyDecl->getName() << " with " << propertyName << '\n';
       return propertyDecl->getName() == propertyName;
     };
     

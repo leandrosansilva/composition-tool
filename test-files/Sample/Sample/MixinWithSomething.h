@@ -39,7 +39,7 @@ typedef struct SomeStruct
 
 @end
 
-@interface MixinWithSomething : TheBaseOfTheMixinWithSomething
+@interface MixinWithSomething : TheBaseOfTheMixinWithSomething<SomeDelegate, SomeOtherDelegate>
 
 - (instancetype)initWithName:(NSString*)name;
 
