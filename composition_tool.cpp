@@ -48,6 +48,17 @@ namespace {
 
   struct CodeGeneratorContext
   {
+    CodeGeneratorContext(clang::CompilerInstance* compilerInstance,
+                         llvm::StringRef inputFilename,
+                         llvm::raw_ostream& headerStream,
+                         llvm::raw_ostream& implStream):
+      compilerInstance(compilerInstance),
+      inputFilename(inputFilename),
+      headerStream(headerStream),
+      implStream(implStream)
+    {
+    }
+    
     clang::CompilerInstance* compilerInstance;
     llvm::StringRef inputFilename;
     llvm::raw_ostream& headerStream;
@@ -606,8 +617,6 @@ namespace {
   }
 }
 
-static llvm::cl::OptionCategory commandLineCategory("Mixin With Steroids");
-
 struct ObjCVisitor: public clang::RecursiveASTVisitor<ObjCVisitor>
 {
   CodeGeneratorContext _context;
@@ -722,7 +731,7 @@ struct ObjCASTConsumer: public clang::ASTConsumer
   KnownDeclarations _knownDeclarations;
   ObjCVisitor _visitor;
 
-  ObjCASTConsumer(CodeGeneratorContext context):
+  ObjCASTConsumer(CodeGeneratorContext& context):
   _visitor({context, _knownDeclarations})
   {
   }
@@ -738,34 +747,56 @@ struct ObjCASTConsumer: public clang::ASTConsumer
 
 };
 
+namespace {
+  llvm::cl::OptionCategory commandLineCategory{"Mixin With Steroids Options"};
+  llvm::cl::opt<std::string> headerFilename{"header_filename", llvm::cl::desc("Generated header file")};
+  llvm::cl::opt<std::string> implementationFilename{"implementation_filename", llvm::cl::desc("Generated implementation file")};
+}
+
 // For each source file provided to the tool, a new FrontendAction is created.
 struct MyFrontendAction: public clang::ASTFrontendAction
 {
-  std::string _headerContent;
-  std::string _implContent;
+  std::unique_ptr<llvm::raw_fd_ostream> _headerStream;
+  std::unique_ptr<llvm::raw_fd_ostream> _implStream;
   
-  llvm::raw_string_ostream _headerStream;
-  llvm::raw_string_ostream _implStream;
+  std::unique_ptr<CodeGeneratorContext> _codeGeneratorContext;
   
-  MyFrontendAction():
-    _headerStream(_headerContent),
-    _implStream(_implContent)
+  MyFrontendAction()
   {
   }
   
   virtual ~MyFrontendAction()
   {
-    _headerStream.flush();
-    _implStream.flush();
-    
-    llvm::outs() << "Header: \n" << _headerContent;
-    llvm::outs() << "Implementation: \n" << _implContent;
   }
   
-  auto CreateASTConsumer(clang::CompilerInstance &compilerInstance,
-                         llvm::StringRef file) -> std::unique_ptr<clang::ASTConsumer> final
+  auto BeginSourceFileAction(clang::CompilerInstance &compilerInstance, llvm::StringRef file) -> bool final
   {
-    return llvm::make_unique<ObjCASTConsumer>(CodeGeneratorContext{&compilerInstance, file, _headerStream, _implStream});
+    std::error_code error;
+    
+    _headerStream = std::make_unique<llvm::raw_fd_ostream>("/tmp/generated_header.h", error, llvm::sys::fs::F_RW);
+    assert(!error);
+    
+    _implStream = std::make_unique<llvm::raw_fd_ostream>("/tmp/generated_implementation.h", error, llvm::sys::fs::F_RW);
+    assert(!error);
+    
+    llvm::outs() << "cueca begin action\n";
+    _codeGeneratorContext = std::make_unique<CodeGeneratorContext>(&compilerInstance, file, *_headerStream.get(), *_implStream.get());
+    return true;
+  }
+  
+  auto CreateASTConsumer(clang::CompilerInstance&, llvm::StringRef) -> std::unique_ptr<clang::ASTConsumer> final
+  {
+    llvm::outs() << "cueca create consumer\n";
+    assert(_codeGeneratorContext);
+    return llvm::make_unique<ObjCASTConsumer>(*_codeGeneratorContext.get());
+  }
+  
+  auto EndSourceFileAction() -> void final
+  {
+    llvm::outs() << "cueca end action\n"; 
+    
+    //llvm::outs() << "Header: \n" << _headerContent;
+    //llvm::outs() << "Implementation: \n" << _implContent;   
   }
 };
 
@@ -773,7 +804,7 @@ auto main(int argc, const char **argv) -> int
 {
   auto op = clang::tooling::CommonOptionsParser(argc, argv, commandLineCategory);
   auto tool = clang::tooling::ClangTool(op.getCompilations(), op.getSourcePathList());
-
+  
   return tool.run(clang::tooling::newFrontendActionFactory<MyFrontendAction>().get());
 }
 
