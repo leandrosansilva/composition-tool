@@ -749,8 +749,14 @@ struct ObjCASTConsumer: public clang::ASTConsumer
 
 namespace {
   llvm::cl::OptionCategory commandLineCategory{"Mixin With Steroids Options"};
-  llvm::cl::opt<std::string> headerFilename{"header_filename", llvm::cl::desc("Generated header file")};
-  llvm::cl::opt<std::string> implementationFilename{"implementation_filename", llvm::cl::desc("Generated implementation file")};
+  
+  llvm::cl::opt<std::string> headerFilename{"header-file",
+    llvm::cl::desc("Generated header file"),
+    llvm::cl::cat(commandLineCategory)};
+    
+  llvm::cl::opt<std::string> implementationFilename{"implementation-file",
+    llvm::cl::desc("Generated implementation file"),
+    llvm::cl::cat(commandLineCategory)};
 }
 
 // For each source file provided to the tool, a new FrontendAction is created.
@@ -773,30 +779,24 @@ struct MyFrontendAction: public clang::ASTFrontendAction
   {
     std::error_code error;
     
-    _headerStream = std::make_unique<llvm::raw_fd_ostream>("/tmp/generated_header.h", error, llvm::sys::fs::F_RW);
-    assert(!error);
+    _headerStream = std::make_unique<llvm::raw_fd_ostream>(headerFilename, error, llvm::sys::fs::F_RW);
+    assert(!error && "You must pass -header-file command line argument");
     
-    _implStream = std::make_unique<llvm::raw_fd_ostream>("/tmp/generated_implementation.h", error, llvm::sys::fs::F_RW);
-    assert(!error);
+    _implStream = std::make_unique<llvm::raw_fd_ostream>(implementationFilename, error, llvm::sys::fs::F_RW);
+    assert(!error && "You must pass -implementation-file command line argument");
     
-    llvm::outs() << "cueca begin action\n";
     _codeGeneratorContext = std::make_unique<CodeGeneratorContext>(&compilerInstance, file, *_headerStream.get(), *_implStream.get());
     return true;
   }
   
   auto CreateASTConsumer(clang::CompilerInstance&, llvm::StringRef) -> std::unique_ptr<clang::ASTConsumer> final
   {
-    llvm::outs() << "cueca create consumer\n";
     assert(_codeGeneratorContext);
     return llvm::make_unique<ObjCASTConsumer>(*_codeGeneratorContext.get());
   }
   
   auto EndSourceFileAction() -> void final
   {
-    llvm::outs() << "cueca end action\n"; 
-    
-    //llvm::outs() << "Header: \n" << _headerContent;
-    //llvm::outs() << "Implementation: \n" << _implContent;   
   }
 };
 
