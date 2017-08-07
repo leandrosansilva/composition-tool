@@ -45,6 +45,8 @@ namespace {
   const auto objcInstanceSelectorForwardingFormat = "self.{0}";
 
   const auto objCSelectorSignatureFormat = R"+=+({0} ({1}){2})+=+";
+  
+  const auto objCIncludeFileFormat = "#include \"{0}\"\n";
 
   struct CodeGeneratorContext
   {
@@ -757,6 +759,10 @@ namespace {
   llvm::cl::opt<std::string> implementationFilename{"implementation-file",
     llvm::cl::desc("Generated implementation file"),
     llvm::cl::cat(commandLineCategory)};
+    
+  // FIXME: this is a huge workaround for not being able to get all the files passed on the command line
+  std::vector<std::string> sourcePathList;
+  bool isFirstParse = true;
 }
 
 // For each source file provided to the tool, a new FrontendAction is created.
@@ -786,6 +792,16 @@ struct MyFrontendAction: public clang::ASTFrontendAction
     assert(!error && "You must pass -implementation-file command line argument");
     
     _codeGeneratorContext = std::make_unique<CodeGeneratorContext>(&compilerInstance, file, *_headerStream.get(), *_implStream.get());
+    
+    if (isFirstParse) {
+      isFirstParse = false;
+      for (const auto& filePath: sourcePathList) {
+        *_headerStream.get() << llvm::formatv(objCIncludeFileFormat, filePath);
+      }
+    }
+    
+    *_implStream.get() << llvm::formatv(objCIncludeFileFormat, headerFilename.getValue());
+    
     return true;
   }
   
@@ -803,7 +819,10 @@ struct MyFrontendAction: public clang::ASTFrontendAction
 auto main(int argc, const char **argv) -> int
 {
   auto op = clang::tooling::CommonOptionsParser(argc, argv, commandLineCategory);
-  auto tool = clang::tooling::ClangTool(op.getCompilations(), op.getSourcePathList());
+  
+  sourcePathList = op.getSourcePathList();
+  
+  auto tool = clang::tooling::ClangTool(op.getCompilations(), sourcePathList);
   
   return tool.run(clang::tooling::newFrontendActionFactory<MyFrontendAction>().get());
 }
